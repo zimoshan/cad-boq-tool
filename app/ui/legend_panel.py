@@ -2,7 +2,7 @@
 
 - 每个块一行：块名 / 类别 / 设备类型 / 规格 / 单位 / 规则 / 状态 / 来源
 - 类别·单位·规则 用下拉选择；设备类型·规格 内联编辑，改完自动落库
-- 工具栏：LLM 辅助标定 / 保存 / 确认全部 / 仅看未标定 / 导入 / 导出 / 刷新
+- 工具栏：图纸筛选 / 保存 / 确认全部 / 仅看未标定 / 隐藏建筑块 / 底图减法 / 导入 / 导出 / 刷新
 - 行右键「在图纸中定位」→ locateRequested(block_name)
 - legendChanged()：任一条目变更后发出，供主窗口刷新算量口径
 
@@ -14,7 +14,7 @@ import json
 import os
 from typing import Optional
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
                                QTableWidgetItem, QHeaderView, QPushButton,
@@ -63,9 +63,6 @@ class _WrapDelegate(QStyledItemDelegate):
 
 class LegendPanel(QWidget):
     locateRequested = Signal(str)       # 在画布定位某块
-    unrecognizedLocateRequested = Signal(int, str)  # (eo_id, block_name) 未识别设备→跳转图纸+BOQ手动绑定
-    requestSuggest = Signal()           # 触发 LLM 辅助标定（主窗口跑后台线程）
-    requestFilter = Signal()            # 触发 LLM 设备块快筛（主窗口跑后台线程）
     statusMessage = Signal(str)
     legendChanged = Signal()            # 标定变更（刷新算量口径）
 
@@ -80,14 +77,12 @@ class LegendPanel(QWidget):
         self._base_layers: set = set()  # 底图图层集（set[str]）
         self._base_subtraction = True   # 底图减法默认开（有底图时生效）
         self._base_hidden_blocks: set = set()   # 底图减法判定为建筑块的块名集
-        self._view_mode = "unrecognized"  # "unrecognized"=未识别设备 / "semantic"=设备语义标定
-        self._unrecognized_rows: list = []  # 未识别设备行（dict）
         self._build_ui()
 
     def refresh_enabled(self, has_project: bool):
         """P1-12：按钮与上下文对齐 — 无项目时禁用图例标定操作按钮。"""
-        for b in (self.btn_suggest, self.btn_filter, self.btn_confirm_all,
-                  self.btn_save, self.btn_refresh, self.btn_import, self.btn_export):
+        for b in (self.btn_confirm_all, self.btn_save, self.btn_refresh,
+                  self.btn_import, self.btn_export):
             b.setEnabled(has_project)
 
     # ---------- UI ----------
@@ -98,26 +93,11 @@ class LegendPanel(QWidget):
 
         # 工具栏
         bar = QHBoxLayout()
-        # 视图切换：未识别设备（默认）/ 设备语义标定
-        self.cmb_view = QComboBox()
-        self.cmb_view.addItem("未识别设备", "unrecognized")
-        self.cmb_view.addItem("设备语义标定", "semantic")
-        self.cmb_view.setToolTip(
-            "「未识别设备」：显示尚无 ACCEPTED 候选（未绑定）的工程对象，点击跳转图纸放大并到 BOQ 手动绑定。\n"
-            "「设备语义标定」：按块标定设备类别/类型/规格/单位/规则。")
-        self.cmb_view.currentIndexChanged.connect(self._on_view_changed)
         # 图纸过滤：全部图纸 / 单张图纸（跟随左侧图纸列表联动，也可手动切回）
         self.cmb_sheet = QComboBox()
-        self.cmb_sheet.setMinimumWidth(150)
+        self.cmb_sheet.setMinimumWidth(420)   # 任务5：拉长筛选框，文件名基本完整显示
         self.cmb_sheet.setToolTip("按图纸过滤：显示该图纸实际出现的设备块；「全部图纸」为项目聚合视图")
         self.cmb_sheet.currentIndexChanged.connect(self._on_sheet_combo_changed)
-        self.btn_suggest = QPushButton("LLM 辅助标定")
-        self.btn_suggest.clicked.connect(self.requestSuggest.emit)
-        self.btn_filter = QPushButton("LLM 筛选设备块")
-        self.btn_filter.setToolTip(
-            "先让 LLM 快速分类：设备/线缆保留，门窗墙柱洁具等建筑块自动隐藏。\n"
-            "建议先跑快筛再跑完整标定（标定会自动跳过建筑块，更快）")
-        self.btn_filter.clicked.connect(self.requestFilter.emit)
         self.btn_confirm_all = QPushButton("确认全部")
         self.btn_confirm_all.clicked.connect(self._on_confirm_all)
         self.btn_save = QPushButton("保存")
@@ -136,7 +116,7 @@ class LegendPanel(QWidget):
         self.chk_hide_building.setChecked(self._hide_building)
         self.chk_hide_building.setToolTip(
             "隐藏门/窗/墙/柱/洁具/家具/轴线等建筑块，只看设备/线缆/待分类块。\n"
-            "未跑「LLM 筛选设备块」时该开关基本无效果（类别未知）")
+            "类别未知（未标定）的块不受该开关影响")
         self.chk_hide_building.toggled.connect(self._on_hide_building_toggle)
         self.chk_base_sub = QPushButton("底图减法")
         self.chk_base_sub.setCheckable(True)
@@ -146,9 +126,8 @@ class LegendPanel(QWidget):
             "切换底图后自动生效；无底图时无效。")
         self.chk_base_sub.toggled.connect(self._on_base_sub_toggle)
         self.chk_base_sub.setVisible(False)   # 无底图时不显示
-        bar.addWidget(self.cmb_view)
         bar.addWidget(self.cmb_sheet)
-        for b in (self.btn_filter, self.btn_suggest, self.btn_confirm_all, self.btn_save,
+        for b in (self.btn_confirm_all, self.btn_save,
                   self.btn_refresh, self.btn_import, self.btn_export,
                   self.chk_unconfirmed, self.chk_hide_building, self.chk_base_sub):
             bar.addWidget(b)
@@ -162,12 +141,22 @@ class LegendPanel(QWidget):
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
-        # 长文本换行显示（wordWrap + 不省略），块名列限宽防拉爆
-        self.table.setWordWrap(True)              # QTableView 级换行（sizeHint 随之计算）
-        self.table.horizontalHeader().setMaximumSectionSize(320)
-        self.table.horizontalHeader().setSectionResizeMode(COL_BLOCK, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(COL_TYPE, QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(COL_SPEC, QHeaderView.Stretch)
+        # 列宽策略（任务4）：短列贴合内容且用户可拖动；长文本列均分剩余空间。
+        # 全表 wordWrap：长文本按列宽自动换行，行高随内容自适应。
+        self.table.setWordWrap(True)
+        self._stretch_cols = {COL_TYPE, COL_SPEC, COL_SOURCE}
+        hdr = self.table.horizontalHeader()
+        for col in range(len(HEADERS)):
+            hdr.setSectionResizeMode(
+                col, QHeaderView.Stretch if col in self._stretch_cols
+                else QHeaderView.Interactive)
+        # 拖动列宽后行高联动重算（换行行数变化 → 防抖 150ms 重算，避免拖动中每帧全表重排）
+        self._row_height_timer = QTimer(self)
+        self._row_height_timer.setSingleShot(True)
+        self._row_height_timer.setInterval(150)
+        self._row_height_timer.timeout.connect(self.table.resizeRowsToContents)
+        hdr.sectionResized.connect(self._on_section_resized)
+        self._fit_key = None   # 列宽自适应记忆：(project_id, sheet_id) 变化才重新 fit
         self._wrap_delegate = _WrapDelegate(self.table)
         self.table.setItemDelegate(self._wrap_delegate)
         # 注意：QTableWidget.setItemDelegateForColumn 不接管 delegate 所有权，
@@ -181,7 +170,6 @@ class LegendPanel(QWidget):
         self.table.setItemDelegateForColumn(COL_UNIT, self._unit_delegate)
         self.table.setItemDelegateForColumn(COL_RULE, self._rule_delegate)
         self.table.cellChanged.connect(self._on_cell_changed)
-        self.table.cellDoubleClicked.connect(self._on_cell_double_clicked)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._on_context_menu)
         root.addWidget(self.table, 1)
@@ -249,7 +237,6 @@ class LegendPanel(QWidget):
                     r = dict(row); r["_count"] = 0
                     self._rows.append(r)
         self._compute_base_hidden_blocks()
-        self._load_unrecognized()
         self._render()
         self._update_status()
 
@@ -330,32 +317,6 @@ class LegendPanel(QWidget):
             return
         self.set_sheet_filter(self.cmb_sheet.currentData())
 
-    def _on_view_changed(self, _idx):
-        self._view_mode = self.cmb_view.currentData() or "unrecognized"
-        self._render()
-        self._update_status()
-
-    def _load_unrecognized(self):
-        """加载未识别设备：工程对象中无 ACCEPTED 候选（未绑定）的条目。"""
-        self._unrecognized_rows = []
-        if self._project_id is None:
-            return
-        sheets_map = {s.id: s.filename for s in db.get_sheets(self._project_id)}
-        for eo in db.get_engineering_objects(self._project_id):
-            if db.get_candidates(self._project_id, status="ACCEPTED",
-                                 engineering_object_id=eo.id):
-                continue  # 已绑定 → 跳过
-            self._unrecognized_rows.append({
-                "eo_id": eo.id,
-                "sheet_id": eo.sheet_id,
-                "block_name": eo.block_name or eo.layer_name,
-                "object_type": eo.object_type,
-                "system": eo.system or "",
-                "specification": eo.specification or "",
-                "sheet_name": sheets_map.get(eo.sheet_id, f"#{eo.sheet_id}"),
-                "status": "未识别",
-            })
-
     @property
     def current_sheet_id(self) -> Optional[int]:
         return self._sheet_id
@@ -381,10 +342,6 @@ class LegendPanel(QWidget):
 
     def _render(self):
         self._loading = True
-        if self._view_mode == "unrecognized":
-            self._render_unrecognized()
-            self._loading = False
-            return
         rows = self._visible_rows()
         self.table.setRowCount(0)
         self.table.setRowCount(len(rows))
@@ -404,34 +361,31 @@ class LegendPanel(QWidget):
             self._set(i, COL_SOURCE, src, editable=False)
         self.table.resizeRowsToContents()   # 换行后行高自适应
         self._loading = False
+        self._fit_columns()
 
-    # 未识别设备视图列
-    UNRECOGNIZED_HEADERS = ["块名/图层", "类型", "系统", "规格", "所在图纸", "状态"]
+    def _on_section_resized(self, *args):
+        """列宽变化（含拖动）→ 防抖重算行高（换行行数随列宽变化）。"""
+        self._row_height_timer.start()
 
-    def _render_unrecognized(self):
-        """渲染未识别设备视图：无 ACCEPTED 候选的工程对象。"""
-        self.table.setColumnCount(len(self.UNRECOGNIZED_HEADERS))
-        self.table.setHorizontalHeaderLabels(self.UNRECOGNIZED_HEADERS)
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
-        rows = self._unrecognized_rows
-        self.table.setRowCount(0)
-        self.table.setRowCount(len(rows))
-        type_label = {"equipment": "设备", "linear": "线性", "area": "面积"}
-        for i, r in enumerate(rows):
-            self._set(i, 0, r["block_name"], editable=False)
-            self._set(i, 1, type_label.get(r["object_type"], r["object_type"]), editable=False)
-            self._set(i, 2, r["system"] or "-", editable=False)
-            self._set(i, 3, r["specification"] or "-", editable=False)
-            self._set(i, 4, r["sheet_name"], editable=False)
-            self._set(i, 5, r["status"], editable=False, color=T.WARNING_TEXT)
-            # 存 eo_id 供点击定位
-            self.table.item(i, 0).setData(Qt.UserRole, r["eo_id"])
-        self.table.resizeRowsToContents()
+    def _fit_columns(self):
+        """按内容自适应初始列宽（任务4）。
+
+        - 短列（块名/类别/单位/规则/状态）：贴合内容宽度，设上下限，用户可拖动
+        - 长文本列（设备类型/规格/来源）：Stretch 模式自动均分剩余空间，长文本换行
+        - 同一数据源只 fit 一次：保留用户手动拖动的列宽；切换项目/图纸后重新 fit
+        """
+        key = (self._project_id, self._sheet_id)
+        if key == self._fit_key:
+            return
+        self._fit_key = key
+        hdr = self.table.horizontalHeader()
+        self.table.resizeColumnsToContents()   # 先全列按内容（含表头文字）
+        for col in range(self.table.columnCount()):
+            if col in self._stretch_cols:
+                continue                        # 长文本列交给 Stretch，不手动定宽
+            w = hdr.sectionSize(col)
+            w = max(56, min(w, 260))            # 过窄无法点击，过宽（超长块名）换行
+            hdr.resizeSection(col, w)
 
     def _set(self, row, col, text, editable=True, color=None):
         item = QTableWidgetItem(str(text))
@@ -443,15 +397,6 @@ class LegendPanel(QWidget):
         self.table.setItem(row, col, item)
 
     # ---------- 编辑落库 ----------
-    def _on_cell_double_clicked(self, row, col):
-        """未识别设备视图：双击行 → 跳转图纸放大 + BOQ 手动绑定。"""
-        if self._view_mode != "unrecognized":
-            return
-        if row >= len(self._unrecognized_rows):
-            return
-        r = self._unrecognized_rows[row]
-        self.unrecognizedLocateRequested.emit(r["eo_id"], r["block_name"])
-
     def _on_cell_changed(self, row, col):
         if self._loading:
             return
@@ -606,38 +551,7 @@ class LegendPanel(QWidget):
         self._update_status()
         self.statusMessage.emit(f"块 [{bname}] 已标记为「{category}」")
 
-    # ---------- 接受主窗口回灌的 LLM 结果 ----------
-    def apply_suggestions(self, rows: list):
-        """主窗口跑完 LLM 后调用：保存建议并刷新（保持当前图纸过滤）"""
-        for r in rows:
-            db.save_block_legend(r)
-        self.load_project(self._project_id, self._sheet_id)
-        self.statusMessage.emit(f"LLM 辅助标定完成，新增/刷新 {len(rows)} 条（待复核）")
-
-    def apply_filter_result(self, classification: dict):
-        """主窗口跑完 LLM 快筛后调用：保存分类并刷新（保持当前图纸过滤）。
-
-        classification: {block_name: "设备"/"线缆"/"建筑"/"其他"}
-        """
-        if self._project_id is None:
-            return
-        exist = db.get_block_legend_map(self._project_id)
-        rows = bl.apply_filter(self._project_id, classification, exist)
-        for r in rows:
-            db.save_block_legend(r)
-        self.load_project(self._project_id, self._sheet_id)
-        hidden = self._hidden_building_count()
-        visible = len(self._visible_rows())
-        self.statusMessage.emit(
-            f"设备块筛选完成：保留 {visible} 个待核对块，"
-            f"{hidden} 个建筑块已隐藏（开关可切换显示）")
-
     def _update_status(self):
-        if self._view_mode == "unrecognized":
-            n = len(self._unrecognized_rows)
-            self.status_label.setText(
-                f"未识别设备（无 ACCEPTED 候选，未绑定）共 {n} 条 · 双击行 → 跳转图纸放大并到 BOQ 手动绑定")
-            return
         total = len(self._rows)
         confirmed = sum(1 for r in self._rows if r.get("confirmed"))
         uncalibrated = sum(1 for r in self._rows

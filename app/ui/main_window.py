@@ -21,7 +21,6 @@ from .. import measure, report
 from ..cad import cad_parser as cad_parser
 from ..cad import dwg as dwg_svc
 from ..boq import boq_parser as boq_parser
-from ..takeoff import block_legend as bl
 from ..models import BoqItem, LayerInfo, BlockInfo
 from .canvas import CanvasView
 from .layer_tree import LayerTreeWidget
@@ -206,83 +205,6 @@ class _BatchReparseWorker(QThread):
             self.failed.emit(f"{e}\n{traceback.format_exc()}")
 
 
-class _LegendSuggestWorker(QThread):
-    """图例 LLM 辅助标定后台线程"""
-    progress = Signal(str)
-    finished_ok = Signal(object)        # suggestions dict
-    failed = Signal(str)
-
-    def __init__(self, project_id: int, blocks: list, config):
-        super().__init__(parent=None)
-        self._project_id = project_id
-        self._blocks = blocks
-        self._config = config
-
-    def run(self):
-        try:
-            exist = db.get_block_legend_map(self._project_id)
-            # 已判为「建筑」的块（LLM 快筛或人工标记）不参与完整标定，省批次
-            building = {b for b, row in exist.items()
-                        if (row.get("category") or "").strip() == "建筑"}
-            blocks = [b for b in self._blocks if b[0] not in building]
-            if not blocks:
-                self.finished_ok.emit({})
-                return
-
-            def _prog(done, total, info):
-                self.progress.emit(f"LLM 标定 {info}")
-
-            sugg = bl.llm_suggest_legend(
-                blocks,
-                project_type=self._config.project_type,
-                specialty=self._config.specialty,
-                model=self._config.llm_model,
-                host=self._config.ollama_host,
-                timeout=max(self._config.timeout, 300),   # 每批 40 块约需 60-90s
-                existing=exist,
-                progress_cb=_prog,
-            )
-            self.finished_ok.emit(sugg)
-        except Exception as e:  # noqa: BLE001
-            import traceback
-            self.failed.emit(f"{e}\n{traceback.format_exc()}")
-
-
-class _LegendFilterWorker(QThread):
-    """图例 LLM 设备块快筛后台线程（轻量分类：设备/线缆/建筑/其他）"""
-    progress = Signal(str)
-    finished_ok = Signal(object)        # {block_name: category}
-    failed = Signal(str)
-
-    def __init__(self, project_id: int, blocks: list, config):
-        super().__init__(parent=None)
-        self._project_id = project_id
-        self._blocks = blocks
-        self._config = config
-
-    def run(self):
-        try:
-            exist = db.get_block_legend_map(self._project_id)
-
-            def _prog(done, total, info):
-                self.progress.emit(f"LLM 快筛 {info}")
-
-            res = bl.llm_filter_devices(
-                self._blocks,
-                project_type=self._config.project_type,
-                specialty=self._config.specialty,
-                model=self._config.llm_model,
-                host=self._config.ollama_host,
-                timeout=max(self._config.timeout, 300),
-                existing=exist,
-                progress_cb=_prog,
-            )
-            self.finished_ok.emit(res)
-        except Exception as e:  # noqa: BLE001
-            import traceback
-            self.failed.emit(f"{e}\n{traceback.format_exc()}")
-
-
 class _ParseCancelled(Exception):
     """用户取消解析：在进度回调中抛出，worker 静默退出。"""
 
@@ -406,7 +328,6 @@ class MainWindow(QMainWindow):
         self._stat_layers = 0
         self._stat_boq = 0
         self._pending_locate_name = None  # 跨图纸定位时暂存块名/图层名
-        self._pending_unrecognized = None  # 跨图纸定位未识别设备时暂存 (EO, block_name)
         # 计量重算防抖（P0-5）
         self._recalc_timer: QTimer | None = None
         self._recalc_pending_item: int | None = None
@@ -795,9 +716,6 @@ class MainWindow(QMainWindow):
 
         # 图例标定面板
         self.legend_panel.locateRequested.connect(self._on_legend_locate)
-        self.legend_panel.unrecognizedLocateRequested.connect(self._on_unrecognized_locate)
-        self.legend_panel.requestSuggest.connect(self._run_legend_suggest)
-        self.legend_panel.requestFilter.connect(self._run_legend_filter)
         self.legend_panel.statusMessage.connect(self.statusBar().showMessage)
 
         # 绑定工作台
@@ -1590,11 +1508,6 @@ class MainWindow(QMainWindow):
             if pending:
                 self._pending_locate_name = None
                 self._on_legend_locate(pending)
-            # 跨图纸定位未识别对象：图纸加载完成后自动触发
-            pending_ur = self._pending_unrecognized
-            if pending_ur:
-                self._pending_unrecognized = None
-                self._do_unrecognized_locate(*pending_ur)
             self._refresh_enabled()
         except Exception as e:  # noqa: BLE001
             logger.exception("sheet switch failed: sheet_id=%s filename=%s elapsed_ms=%.1f",
@@ -2328,139 +2241,3 @@ class MainWindow(QMainWindow):
         self.canvas.zoom_to_entities(ids[:1])
         self.statusBar().showMessage(
             f"定位块 [{block_name}]：{len(ids)} 个引用（已高亮，ESC/点击空白取消）")
-
-    def _on_unrecognized_locate(self, eo_id: int, block_name: str):
-        """未识别设备：跳转图纸放大 + 切 BOQ 页 + 进入手动绑定（拾取模式）。
-
-        用户流程：双击未识别设备行 → 画布放大该块 → 切到 BOQ 页 →
-        在 BOQ 选一条清单 → 在画布拾取实体 → 确认绑定。
-        """
-        if self._project_id is None:
-            self.statusBar().showMessage("请先新建/选择项目")
-            return
-        eo = db.get_engineering_object(eo_id)
-        if eo is None:
-            self.statusBar().showMessage("未找到该工程对象")
-            return
-        # 1) 切到目标图纸（若不在当前图纸）
-        if eo.sheet_id != self._sheet_id:
-            self._pending_unrecognized = (eo_id, block_name)
-            sheets = db.get_sheets(self._project_id)
-            for idx, s in enumerate(sheets):
-                if s.id == eo.sheet_id:
-                    self.sheet_list.setCurrentRow(idx)
-                    return  # _on_sheet_changed 末尾会触发 _flush_pending_unrecognized
-            self.statusBar().showMessage("未找到目标图纸")
-            return
-        self._do_unrecognized_locate(eo_id, block_name)
-
-    def _do_unrecognized_locate(self, eo_id: int, block_name: str):
-        """实际执行未识别设备定位（当前图纸已就绪时调用）。"""
-        ids = [e.id for e in db.get_entities(self._sheet_id, block=block_name)]
-        if ids:
-            self.canvas.flash_entities(ids[:80])
-            self.canvas.highlight_entities(ids)
-            self.canvas.zoom_to_entities(ids[:1])
-        # 切到 BOQ 页 + 进入拾取模式（手动绑定）
-        self.right_tabs.setCurrentWidget(self.boq_page)
-        self._mode = "pick"
-        self._update_stats()
-        self.statusBar().showMessage(
-            f"未识别设备 [{block_name}]：请在右侧 BOQ 选择一条清单，再在画布拾取该设备完成手动绑定")
-
-    def _run_legend_suggest(self):
-        """启动 LLM 辅助标定后台线程"""
-        if self._project_id is None:
-            QMessageBox.information(self, "提示", "请先新建/选择项目")
-            return
-        blocks = db.collect_blocks(self._project_id)
-        if not blocks:
-            QMessageBox.information(self, "提示", "当前项目未识别到任何块")
-            return
-        from app.takeoff.orchestrator import TakeoffConfig
-        self._legend_worker = _LegendSuggestWorker(
-            self._project_id, blocks, TakeoffConfig())
-        self._legend_worker.finished_ok.connect(self._on_legend_suggest_done)
-        self._legend_worker.failed.connect(self._on_legend_suggest_failed)
-        self._legend_dialog = QProgressDialog("LLM 辅助标定中...（分批调用，可能需要数分钟）", "取消", 0, 0, self)
-        self._legend_dialog.setWindowModality(Qt.WindowModal)
-        self._legend_dialog.setWindowTitle("图例辅助标定")
-        self._legend_dialog.show()
-        self._legend_worker.progress.connect(self._legend_dialog.setLabelText)
-        self._legend_worker.start()
-
-    def _on_legend_suggest_done(self, suggestions: dict):
-        dlg = getattr(self, "_legend_dialog", None)
-        if dlg:
-            dlg.close()
-            self._legend_dialog = None
-        if not suggestions:
-            self.statusBar().showMessage("LLM 未返回有效建议")
-            return
-        existing = db.get_block_legend_map(self._project_id)
-        rows = bl.apply_suggestions(self._project_id, suggestions, existing)
-        self.legend_panel.apply_suggestions(rows)
-        self.right_tabs.setCurrentWidget(self.legend_panel)
-
-    def _on_legend_suggest_failed(self, err: str):
-        dlg = getattr(self, "_legend_dialog", None)
-        if dlg:
-            dlg.close()
-            self._legend_dialog = None
-        self.warning_box(
-            "LLM 辅助标定失败",
-            "LLM 未能完成图例标定。\n\n请依次确认：\n"
-            "1) 本机 Ollama 已启动（默认 http://127.0.0.1:11434）\n"
-            "2) 已拉取模型 qwen2.5:7b\n"
-            "3) 或改用「手动标定」直接在表格内填写。\n\n"
-            "（点击「显示详情」查看完整报错）",
-            err)
-
-    # ---------- LLM 设备块快筛 ----------
-    def _run_legend_filter(self):
-        """启动 LLM 设备块快筛后台线程（轻量分类，比完整标定快数倍）"""
-        if self._project_id is None:
-            QMessageBox.information(self, "提示", "请先新建/选择项目")
-            return
-        blocks = db.collect_blocks(self._project_id)
-        if not blocks:
-            QMessageBox.information(self, "提示", "当前项目未识别到任何块")
-            return
-        from app.takeoff.orchestrator import TakeoffConfig
-        self._legend_filter_worker = _LegendFilterWorker(
-            self._project_id, blocks, TakeoffConfig())
-        self._legend_filter_worker.finished_ok.connect(self._on_legend_filter_done)
-        self._legend_filter_worker.failed.connect(self._on_legend_filter_failed)
-        self._legend_filter_dialog = QProgressDialog(
-            "LLM 筛选设备块中...（先规则预筛，再分批调用，通常几十秒）",
-            "取消", 0, 0, self)
-        self._legend_filter_dialog.setWindowModality(Qt.WindowModal)
-        self._legend_filter_dialog.setWindowTitle("设备块筛选")
-        self._legend_filter_dialog.show()
-        self._legend_filter_worker.progress.connect(self._legend_filter_dialog.setLabelText)
-        self._legend_filter_worker.start()
-
-    def _on_legend_filter_done(self, classification: dict):
-        dlg = getattr(self, "_legend_filter_dialog", None)
-        if dlg:
-            dlg.close()
-            self._legend_filter_dialog = None
-        if not classification:
-            self.statusBar().showMessage("LLM 未返回有效分类")
-            return
-        self.legend_panel.apply_filter_result(classification)
-        self.right_tabs.setCurrentWidget(self.legend_panel)
-
-    def _on_legend_filter_failed(self, err: str):
-        dlg = getattr(self, "_legend_filter_dialog", None)
-        if dlg:
-            dlg.close()
-            self._legend_filter_dialog = None
-        self.warning_box(
-            "LLM 设备块筛选失败",
-            "LLM 设备块快筛未能完成。\n\n请依次确认：\n"
-            "1) 本机 Ollama 已启动（默认 http://127.0.0.1:11434）\n"
-            "2) 已拉取模型 qwen2.5:7b\n"
-            "3) 失败不影响规则预筛结果（门窗墙柱洁具等仍会生效）。\n\n"
-            "（点击「显示详情」查看完整报错）",
-            err)
