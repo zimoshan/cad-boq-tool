@@ -1,0 +1,16 @@
+{
+  "name": "cad-boq-tool",
+  "version": "0.1.0",
+  "description": "Bill of Quantities (BOQ) tooling for CAD projects",
+  "main": "src/index.js",
+  "bin": {
+    "cad-boq-tool": "bin/cad-boq-tool.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "cli": "node bin/cad-boq-tool.js",
+    "test": "echo \"No tests yet\" && exit 0"
+  },
+  "author": "",
+  "license": "MIT"
+}
