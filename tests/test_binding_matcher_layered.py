@@ -59,9 +59,15 @@ def _make(match_rule=(), hist=(), semantic=(), rejected=(), llm_out=None,
         semantic_candidates=mock.MagicMock(side_effect=lambda pid, eo: list(semantic)),
         _boq_top_n_for_llm=mock.MagicMock(side_effect=lambda pid, eo, top_n=None: list(fallback)),
     )
-    if llm_out is not None:
-        fakes["llm_rerank"] = mock.MagicMock(
-            side_effect=lambda pid, eo, base, top_n=None, items=None: list(llm_out))
+    # 始终打桩：避免走到真实 llm_rerank（会连真实配置/DB）。
+    # llm_out 未给时模拟「LLM 无产出 → base 原样保底」。
+    out = list(llm_out) if llm_out is not None else None
+    fakes["llm_rerank"] = mock.MagicMock(
+        side_effect=((lambda pid, eo, base, top_n=None, items=None: list(out))
+                     if out is not None else
+                     (lambda pid, eo, base, top_n=None, items=None: list(base))))
+    # 默认后端可用（真实探测会连 Ollama/读配置，单测必须替换）
+    fakes["llm_available"] = mock.MagicMock(return_value=True)
     return fakes, rec
 
 
@@ -90,13 +96,14 @@ class BindingLayeredTest(unittest.TestCase):
         self.assertEqual(rec.calls[0]["score"], 0.9)
         self.assertEqual(rec.calls[0]["method"], cand.METHOD_RULE)
         self.assertEqual(fakes["semantic_candidates"].call_count, 0)
-        self.assertNotIn("llm_rerank", fakes)  # 强规则路径根本不设置 LLM 层
+        self.assertEqual(fakes["llm_rerank"].call_count, 0)   # 强规则路径不进 LLM 层
+        self.assertEqual(fakes["llm_available"].call_count, 0)
         self.assertEqual(res["stats"]["rule"], 1)
 
     def test_weak_rule_plus_semantic_no_llm(self):
         """弱规则 + 语义 → 合并写入（use_llm=False）"""
         fakes, rec = _make(match_rule=[(10, 0.4, "弱")], semantic=[(11, 0.6, "语义")])
-        res = _generate(fakes)
+        res = _generate(fakes, use_llm=False)
         self.assertEqual({c["boq"] for c in rec.calls}, {10, 11})
         self.assertEqual(res["stats"]["embedding"], 1)
 
@@ -129,7 +136,7 @@ class BindingLayeredTest(unittest.TestCase):
         self.assertEqual(res["stats"]["no_match"], 1)
         # fallback 非空（无 LLM：截断 top_n 写入）
         fakes2, rec2 = _make(fallback=[(20, 0.4, "交集", cand.METHOD_EMBEDDING, None)])
-        res2 = _generate(fakes2)
+        res2 = _generate(fakes2, use_llm=False)
         self.assertEqual({c["boq"] for c in rec2.calls}, {20})
         self.assertEqual(res2["stats"]["embedding"], 1)
 
@@ -138,7 +145,7 @@ class BindingLayeredTest(unittest.TestCase):
         fakes, rec = _make(match_rule=[(10, 0.5, "规则"), (12, 0.4, "规则")],
                          semantic=[(11, 0.6, "语义"), (13, 0.5, "语义")],
                          hist=[(10, "历史")], rejected={10, 11})
-        res = _generate(fakes)
+        res = _generate(fakes, use_llm=False)
         written = {c["boq"] for c in rec.calls}
         self.assertEqual(written, {12, 13})
         self.assertEqual(res["stats"]["skipped_rejected"], 2)
@@ -171,6 +178,25 @@ class BindingLayeredTest(unittest.TestCase):
         # 并发调用携带预载 BOQ（P2-2：避免每作业重复查表）
         _, kw = fakes["llm_rerank"].call_args_list[0]
         self.assertIn("items", kw)
+
+    def test_llm_unavailable_degrades_to_local(self):
+        """LLM 后端不可用 → base 候选原样写库（纯本地层），不调 llm_rerank"""
+        fakes, rec = _make(match_rule=[(10, 0.4, "弱规则")],
+                           semantic=[(11, 0.6, "语义")])
+        fakes["llm_available"] = mock.MagicMock(return_value=False)
+        res = _generate(fakes, use_llm=True)              # 默认想用 LLM，但后端不可用
+        self.assertEqual(fakes["llm_rerank"].call_count, 0)
+        self.assertEqual({c["boq"] for c in rec.calls}, {10, 11})
+        self.assertEqual(res["stats"]["embedding"], 1)    # 按本地层归属统计
+        self.assertEqual(res["stats"]["llm"], 0)
+        self.assertEqual(res["stats"]["llm_unavailable"], 1)
+
+    def test_availability_not_probed_when_no_jobs(self):
+        """全部被规则强命中/历史确认早停 → 不探测 LLM 可用性（省一次网络探测）"""
+        fakes, rec = _make(match_rule=[(10, 0.9, "规则强")])
+        res = _generate(fakes, use_llm=True)
+        self.assertEqual(fakes["llm_available"].call_count, 0)
+        self.assertEqual(res["candidates"], 1)
 
 
 if __name__ == "__main__":

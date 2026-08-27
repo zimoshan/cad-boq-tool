@@ -173,9 +173,9 @@ class BindingWorkbench(QWidget):
         self.btn_extract.clicked.connect(self._on_extract)
         self.btn_generate = QPushButton("生成候选")
         self.btn_generate.clicked.connect(self._on_generate)
-        self.chk_llm = QCheckBox("LLM 增强")
-        self.chk_llm.setToolTip("分层候选：历史确认→规则→语义召回，勾选后追加 Qwen "
-                                "精排增强（规则强命中/历史确认命中的对象不会消耗 LLM，需本机 Ollama）")
+        self.btn_generate.setToolTip(
+            "分层候选：历史确认 → 规则 → 语义召回 → LLM 精排。\n"
+            "历史确认/规则强命中的对象不消耗 LLM；LLM 后端不可用时自动降级为纯本地层。")
         self.btn_auto = QPushButton("批量确认(规则满置信)")
         self.btn_auto.clicked.connect(self._on_auto_confirm)
         self.btn_llm_classify = QPushButton("LLM 补充分类")
@@ -183,7 +183,7 @@ class BindingWorkbench(QWidget):
         self.btn_llm_classify.clicked.connect(self._on_llm_classify)
         self.btn_refresh = QPushButton("刷新")
         self.btn_refresh.clicked.connect(lambda: self.load_project(self._project_id))
-        for w in (self.btn_extract, self.btn_generate, self.chk_llm,
+        for w in (self.btn_extract, self.btn_generate,
                   self.btn_auto, self.btn_llm_classify, self.btn_refresh):
             bar.addWidget(w)
         bar.addStretch(1)
@@ -273,7 +273,6 @@ class BindingWorkbench(QWidget):
                    self.btn_llm_classify, self.btn_refresh,
                    self.btn_confirm, self.btn_reject, self.btn_locate):
             bt.setEnabled(ok)
-        self.chk_llm.setEnabled(ok)
 
     def load_project(self, project_id):
         self._project_id = project_id
@@ -418,10 +417,9 @@ class BindingWorkbench(QWidget):
         if not db.get_engineering_objects(self._project_id):
             self.statusMessage.emit("请先「提取工程对象」")
             return
-        use_llm = self.chk_llm.isChecked()
         self.btn_generate.setEnabled(False)
-        self.statusMessage.emit("生成候选中…" + ("（LLM 可能较慢）" if use_llm else ""))
-        self._worker = _BindingWorker(self._project_id, use_llm, parent=self)
+        self.statusMessage.emit("生成候选中…（历史→规则→语义→LLM 精排，规则强命中不耗 LLM）")
+        self._worker = _BindingWorker(self._project_id, True, parent=self)
         self._worker.finished_ok.connect(self._on_generate_done)
         self._worker.failed.connect(self._on_generate_failed)
         self._worker.start()
@@ -430,9 +428,12 @@ class BindingWorkbench(QWidget):
         self.btn_generate.setEnabled(True)
         self.load_project(self._project_id)
         st = res["stats"]
+        llm_note = ""
+        if st.get("llm_unavailable"):
+            llm_note = f" / ⚠ LLM 不可用已降级（{st['llm_unavailable']} 个对象仅用本地层）"
         self.statusMessage.emit(
             f"候选生成完成：规则 {st['rule']} / 语义 {st['embedding']} / AI {st['llm']} / "
-            f"已绑定跳过 {st['skipped_bound']} / 未匹配 {st['no_match']}")
+            f"已绑定跳过 {st['skipped_bound']} / 未匹配 {st['no_match']}{llm_note}")
 
     def _on_generate_failed(self, err: str):
         self.btn_generate.setEnabled(True)

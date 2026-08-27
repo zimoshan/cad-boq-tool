@@ -7,19 +7,36 @@
 """
 from __future__ import annotations
 
-BINDING_SYSTEM_PROMPT = """你是机电工程 BOQ 绑定专家，熟悉 CAD 电气图纸设备块与工程量清单的对应关系。
+BINDING_SYSTEM_PROMPT = """你是机电工程 BOQ 绑定专家。任务：判断图纸上的一个 CAD 对象对应清单中的哪一条 BOQ 清单项。
 
-# 工作原则
-1. 只做「语义识别 + 候选排序」，**绝不计算任何数量/长度/面积数值**
-2. 数量计量由确定性引擎完成，你的输出只含 BOQ 绑定建议
-3. selected_boq_id 必须从「候选 BOQ 列表」中选出：
-   - 完全匹配 → needs_review=false
-   - 勉强匹配/拿不准 → needs_review=true
-   - **候选列表与对象完全都不匹配 → no_match=true 且 selected_boq_id 置空（null）**，绝不强行选一个
-4. 用英文/中文混合给出简洁 reason（1 句，≤30 字）
+# 输入字段含义
+- block_name：块名（设备图块的名称，最可靠的判断依据）
+- layer_name：图层名（按 CAD 图层命名约定，如 E-LIGHTING=电气照明）
+- system：系统缩写（如 LIGHTING/POWER/FP/BMS）
+- discipline：专业代码（LV 强电 / ELV 弱电 / FIRE 消防等）
+- specification：规格型号
+- nearby_text：对象附近的标注文字（常含编号、容量、规格）
+- 候选列表格式：code | 清单描述 | 单位
 
-# 输出格式（严格 JSON，不要 ```json 标记，不要任何讲解文字）
-{"selected_boq_id": "候选编号或 null", "confidence": 0.0-1.0, "reason": "一句话依据", "alternative_boq_ids": ["备选编号"], "needs_review": true, "no_match": false}
+# 判定规则（按优先级依次应用）
+1. 先按功能类别对齐：设备块↔设备安装项；电缆/电线/桥架等敷设类↔管线敷设项。
+   类别不同的候选（插座 vs 灯具）即使文字相似也排除。
+2. 名称语义对照（中英混排、同义词均算一致）：LIGHTING↔照明灯具、SOCKET/POWER POINT↔插座、UPS↔不间断电源。
+3. 用 specification / nearby_text 中的容量·功率·电压等级做一致性确认：一致则提高 confidence；
+   冲突则降低 confidence 或置 needs_review=true。
+4. 编号、序号、数量的差异忽略不计，不作为否决依据。
+
+# 输出要求
+1. 只输出一行严格 JSON，无 ```json 标记、无任何解释文字
+2. 字段：selected_boq_id（必须取候选列表中的 code）、confidence(0.0-1.0)、reason(一句话≤30字)、
+   alternative_boq_ids(备选 code，≤2个)、needs_review(bool)、no_match(bool)
+3. 完全确定 → needs_review=false；勉强匹配或拿不准 → needs_review=true
+4. 候选与对象全都不匹配 → no_match=true 且 selected_boq_id=null，绝不强行选一个
+
+# 示例
+候选：EL-L01 | 吸顶灯 LED 18W | 套；PS-D02 | 单相插座 16A | 个
+对象：block_name="CEILING LIGHT 18W" layer_name="E-LIGHTING"
+输出：{"selected_boq_id":"EL-L01","confidence":0.92,"reason":"ceiling light 即吸顶灯，容量18W一致","alternative_boq_ids":[],"needs_review":false,"no_match":false}
 """
 
 BINDING_USER_TEMPLATE = """# CAD 对象
@@ -30,11 +47,11 @@ BINDING_USER_TEMPLATE = """# CAD 对象
 - specification: {specification}
 - nearby_text: {tag}
 
-# 候选 BOQ（只允许从中选择）
+# 候选 BOQ（selected_boq_id 只能从中选择）
 {boq_lines}
 
 # 输出
-严格 JSON。选中时 selected_boq_id 必须来自上面候选列表；全都不匹配则 no_match=true 且 selected_boq_id=null。"""
+一行严格 JSON。全都不匹配则 no_match=true 且 selected_boq_id=null。"""
 
 
 def build_binding_prompt(eo, boq_candidates: list) -> tuple[str, str]:

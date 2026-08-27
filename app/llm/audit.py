@@ -18,14 +18,19 @@ def log_llm_call(project_id: int, task_type: str, model: str,
                  input_text: str, output_text: str = "",
                  duration_ms: int = 0, token_input: int = 0, token_output: int = 0,
                  status: str = "ok", error: str = "") -> int:
-    """记录一次 LLM 调用，返回 run_id。"""
+    """记录一次 LLM 调用，返回 run_id。
+
+    input_text/output_text 全文落库（供 prompt 对比优化分析）；
+    hash 仅作去重/关联用的指纹。
+    """
     return db.create_llm_run(
         project_id=project_id, task_type=task_type, model=model,
         model_version="", prompt_version=prompt_version,
         temperature=temperature,
         input_hash=_sha256(input_text), output_hash=_sha256(output_text),
         duration_ms=duration_ms, token_input=token_input, token_output=token_output,
-        status=status, error=error or "")
+        status=status, error=error or "",
+        input_text=input_text, output_text=output_text)
 
 
 def list_runs(project_id: int, limit: int = 50) -> list:

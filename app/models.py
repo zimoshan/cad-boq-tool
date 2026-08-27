@@ -142,6 +142,8 @@ class LlmRun:
     temperature: float = 0.0
     input_hash: str = ""
     output_hash: str = ""
+    input_text: str = ""               # 完整输入（system+user），供 prompt 分析优化
+    output_text: str = ""              # 模型原始输出全文
     duration_ms: int = 0
     token_input: int = 0
     token_output: int = 0

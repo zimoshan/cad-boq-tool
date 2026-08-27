@@ -22,6 +22,35 @@ from ..takeoff.llm_backends import (LLMConfig, create_backend, LLMBackend)
 
 
 # ----- 内部辅助 -----
+def llm_available(timeout: float = 2.0) -> bool:
+    """LLM 后端是否可用（秒级探测，避免逐 EO 调用挨个超时）。
+
+    - ollama：GET {host}/api/tags（2s 超时），不通即 False
+    - 云端/custom：配置里有 api_key / base_url 即视为可用
+      （真实连通性由单次调用的失败保底兜住，不做网络探测）
+    """
+    try:
+        llmc = load_active()
+    except Exception:  # noqa: BLE001 配置读取失败按不可用
+        return False
+    backend = llmc.primary_backend
+    if backend == "ollama":
+        import urllib.request
+        host = (llmc.ollama_host or "").rstrip("/")
+        if not host:
+            return False
+        try:
+            with urllib.request.urlopen(f"{host}/api/tags", timeout=timeout):
+                return True
+        except Exception:  # noqa: BLE001
+            return False
+    if backend == "custom":
+        ep = llmc.custom_endpoints.get("custom") or {}
+        return bool(ep.get("base_url"))
+    # openai / deepseek / dashscope 等 API 型后端
+    return bool(llmc.api_keys.get(backend))
+
+
 def _resolve_backend(llmc: LLMConfig, override_model: str = None,
                      override_host: str = None) -> LLMBackend:
     """从 LLMConfig 工厂创建 backend 实例；可被入参 override_model/host 临时覆盖。"""

@@ -21,6 +21,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 
 from .. import db, config
+from ..llm.runner import llm_available
 from . import candidate as cand
 from .rule_matcher import match_rule, historical_confirmed, already_bound
 from .embedding_matcher import semantic_candidates, enriched_eo_text
@@ -113,23 +114,25 @@ def _run_llm_jobs(llm_jobs: list, project_id: int, top_n: int,
 
 
 def generate_candidates(project_id: int, sheet_id: int = None,
-                        use_llm: bool = False, top_n: int = None) -> dict:
+                        use_llm: bool = True, top_n: int = None) -> dict:
     """为项目（可选单图纸）未绑定 EO 生成候选（分层覆盖）。
 
-    分层：历史确认 → 规则 → 语义 → LLM（LLM 仅 use_llm=True 时启用；规则强命中
-    及历史确认命中则不跑 LLM，节省成本）。各层产出的候选均为 PENDING，
-    统一在写库前过滤已被人工拒绝的组合。
+    分层：历史确认 → 规则 → 语义 → LLM（规则强命中及历史确认命中不跑 LLM，
+    节省成本；use_llm=False 可强制纯本地层）。LLM 前先 llm_available() 秒级探测：
+    后端不可用自动降级为纯本地层并在 stats["llm_unavailable"] 计数。
+    各层产出的候选均为 PENDING，统一在写库前过滤已被人工拒绝的组合。
 
     P2-2 并发：需要 LLM 精排的 EO 先收集，再经 ``ThreadPoolExecutor``
     （max_workers=config.LLM_BATCH_WORKERS）并行调用；仍逐 EO 写 llm_run 审计，
     候选落库保持主线程串行（WAL 写锁单一）。
 
     Args:
-        use_llm: 是否启用第4层 LLM 精排（补充规则/语义未覆盖的场景）。
+        use_llm: 是否启用第4层 LLM 精排（默认 True；后端不可用时自动降级）。
         top_n: 单对象候选上限（默认 config.BINDING_TOP_N）。
     Returns:
         {"candidates": int,
-         "stats": {skipped_bound/rule/embedding/llm/no_match/skipped_rejected},
+         "stats": {skipped_bound/rule/embedding/llm/no_match/skipped_rejected,
+                   [llm_unavailable]},
          "created": [candidate_id, ...]}
     """
     top_n = top_n or config.BINDING_TOP_N
@@ -223,6 +226,19 @@ def generate_candidates(project_id: int, sheet_id: int = None,
                 stats["no_match"] += 1
 
     # ===== 第4层：LLM 精排（并发批量，失败保底原候选） =====
+    if llm_jobs and not llm_available():
+        # 后端不可用（Ollama 未启动 / API key 未配）→ 降级为纯本地层，
+        # base 候选原样写库，避免逐 EO 调用挨个超时。
+        for eo, final in llm_jobs:
+            wrote = _write_final(project_id, eo, final,
+                                 _rejected_pairs(project_id, eo), stats, created)
+            if wrote:
+                _count_layer(final, stats)
+            else:
+                stats["no_match"] += 1
+        stats["llm_unavailable"] = len(llm_jobs)
+        return {"candidates": len(created), "stats": stats, "created": created}
+
     if llm_jobs:
         workers = max(1, int(getattr(config, "LLM_BATCH_WORKERS", 2)))
         _run_llm_jobs(llm_jobs, project_id=project_id, top_n=top_n, items=boq_items,

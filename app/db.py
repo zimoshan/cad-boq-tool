@@ -324,6 +324,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
     lcols = {r[1] for r in conn.execute("PRAGMA table_info(llm_settings)").fetchall()}
     if "custom_embedding_model" not in lcols:
         conn.execute("ALTER TABLE llm_settings ADD COLUMN custom_embedding_model TEXT DEFAULT ''")
+    # prompt 分析：llm_run 保存完整输入/输出全文（旧库增量补充）
+    lrcols = {r[1] for r in conn.execute("PRAGMA table_info(llm_run)").fetchall()}
+    if "input_text" not in lrcols:
+        conn.execute("ALTER TABLE llm_run ADD COLUMN input_text TEXT DEFAULT ''")
+    if "output_text" not in lrcols:
+        conn.execute("ALTER TABLE llm_run ADD COLUMN output_text TEXT DEFAULT ''")
     # P2-4：binding_candidate 复合索引（项目×对象 / 项目×对象×状态）——旧库增量补齐
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_bc_proj_eo "
@@ -1500,17 +1506,18 @@ def delete_candidates_for_item(boq_item_id: int) -> None:
 def create_llm_run(project_id: int, task_type: str, model: str = "", model_version: str = "",
                    prompt_version: str = "", temperature: float = 0.0, input_hash: str = "",
                    output_hash: str = "", duration_ms: int = 0, token_input: int = 0,
-                   token_output: int = 0, status: str = "ok", error: str = "") -> int:
+                   token_output: int = 0, status: str = "ok", error: str = "",
+                   input_text: str = "", output_text: str = "") -> int:
     with get_conn() as conn:
         cur = conn.execute(
             "INSERT INTO llm_run"
             "(project_id, task_type, model, model_version, prompt_version, temperature, "
             " input_hash, output_hash, duration_ms, token_input, token_output, status, "
-            " error, created_at) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " error, created_at, input_text, output_text) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (project_id, task_type, model, model_version, prompt_version, temperature,
              input_hash, output_hash, duration_ms, token_input, token_output, status,
-             error, _now()))
+             error, _now(), input_text, output_text))
         return cur.lastrowid
 
 
