@@ -25,7 +25,11 @@ FLOOR_PATTERNS = [
 
 
 def scan_folder(folder: Path, extensions=(".dxf", ".dwg")) -> List[Path]:
-    """扫描文件夹下所有 DWG/DXF，按自然顺序排序（01 < 02 < 10）"""
+    """扫描文件夹下所有 DWG/DXF，按自然顺序排序（01 < 02 < 10）。
+
+    同名 DWG 与 DXF 并存时只保留 DWG（与 import_folder.scan_drawings 一致，
+    避免同一张图被算量两次）。
+    """
     files = []
     if not folder.is_dir():
         return files
@@ -39,6 +43,10 @@ def scan_folder(folder: Path, extensions=(".dxf", ".dwg")) -> List[Path]:
         if f.resolve() not in seen:
             seen.add(f.resolve())
             unique.append(f)
+    # 同名优先 DWG：同目录下同名文件，若存在 .dwg 则丢弃 .dxf
+    dwg_names = {f.stem.lower() for f in unique if f.suffix.lower() == ".dwg"}
+    unique = [f for f in unique
+              if f.suffix.lower() != ".dxf" or f.stem.lower() not in dwg_names]
     # 自然序排序（数字感知）
     def natural_key(p: Path) -> list:
         parts = re.split(r"(\d+)", p.name.lower())

@@ -5,7 +5,8 @@ V2 工作流第一步：整个 electrical 文件夹（含各系统子文件夹�
 后续核对/绑定直接从缓存与数据库读取，无需重新解析。
 
 三阶段并行流水线（与 batch_reparse 同架构）：
-  阶段1 转换：DWG 分组 → 多 ODA 实例并行批量转换
+  阶段1 分流：DWG 先 ezdwg 秒级探测，可直读的直接解析；探测失败的才分组
+          → 多 ODA 实例并行批量转换
   阶段2 解析：ProcessPoolExecutor 进程池并行 parse_dxf（CPU 密集，GIL 限制线程无加速）
   阶段3 入库：主进程流式收回结果 → add_sheet + replace_entities
 """
@@ -138,7 +139,8 @@ def import_folder(project_id: int, folder: str,
 
     if dwg_files:
         if progress_cb:
-            progress_cb(done, len(files), f"转换 {len(dwg_files)} 张 DWG…", "convert")
+            progress_cb(done, len(files),
+                        f"探测 {len(dwg_files)} 张 DWG 可读性…", "convert")
 
         # 优先 ezdwg 直读，失败的才走 ODA
         ezdwg_ok = []
@@ -149,6 +151,11 @@ def import_folder(project_id: int, folder: str,
                 ezdwg_ok.append((f, src))
             else:
                 need_oda.append((f, src))
+
+        if progress_cb and (ezdwg_ok or need_oda):
+            progress_cb(done, len(files),
+                        f"直读 {len(ezdwg_ok)} 张 / 需转换 {len(need_oda)} 张",
+                        "convert")
 
         # ezdwg 可读的直接作为 dxf_path（parse_dxf 内部按扩展名自动选 backend）
         for f, src in ezdwg_ok:

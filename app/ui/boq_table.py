@@ -60,7 +60,17 @@ class BoqTable(QTableWidget):
             self._set_combo(row, 4, RULE_LABELS.get(it.rule_type, "长度"))
             self._set_item(row, 5, str(it.scale_factor))
             self._set_item(row, 6, "0", gray=True)
-            self._set_item(row, 7, "", gray=True)
+            # P3：实测数量列读持久化值（工程量回写后可直接从 DB 展示，无需重算）
+            mq = getattr(it, "measured_qty", 0) or 0
+            if mq:
+                body = f"✓ {mq:g}"
+                cell7 = QTableWidgetItem(body)
+                cell7.setFlags(cell7.flags() & ~Qt.ItemIsEditable)
+                cell7.setForeground(QColor(T.SUCCESS))
+                cell7.setToolTip("实测数量（已回写持久化值）")
+                self.setItem(row, 7, cell7)
+            else:
+                self._set_item(row, 7, "", gray=True)
         self.blockSignals(False)
         self.resizeRowsToContents()
         # 重载后若有搜索词，重新应用过滤（P1-10）

@@ -475,6 +475,9 @@ class MainWindow(QMainWindow):
         lv.addWidget(t_sheets)
         self.sheet_list = QListWidget()
         self.sheet_list.setMaximumHeight(140)
+        # P3：批量删除图纸支持 → 开启多选（Ctrl/Shift；空白处单击取消全选）
+        from PySide6.QtWidgets import QAbstractItemView
+        self.sheet_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.sheet_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.sheet_list.customContextMenuRequested.connect(self._on_sheet_context_menu)
         lv.addWidget(self.sheet_list)
@@ -672,6 +675,8 @@ class MainWindow(QMainWindow):
             "修复 BOQ", self.repair_boq)
         self._more_actions["export_layers"] = more_menu.addAction(
             "导出图层清单", self.export_layer_list)
+        self._more_actions["materials"] = more_menu.addAction(
+            "主要材料表", self.open_materials_dialog)
         more_menu.addSeparator()
         self._more_actions["legend"] = more_menu.addAction(
             "图例标定", self.focus_legend)
@@ -976,7 +981,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "btn_add_sheet"):
             self.btn_add_sheet.setEnabled(proj_ready)
         for key in ("import_folder", "import_boq", "repair_boq",
-                    "export_layers", "legend", "binding"):
+                    "export_layers", "materials", "legend", "binding"):
             act = getattr(self, "_more_actions", {}).get(key)
             if act is not None:
                 act.setEnabled(proj_ready)
@@ -984,8 +989,8 @@ class MainWindow(QMainWindow):
         has_sheet = has_proj and self._sheet_id is not None
         if hasattr(self, "btn_export"):
             self.btn_export.setEnabled(has_sheet)
-        # 删除图纸需选中一行
-        has_sel = has_sheet and self.sheet_list.currentRow() >= 0
+        # 删除图纸需有选中项（P3：多选≥1 即可）
+        has_sel = has_sheet and len(self.sheet_list.selectedItems()) > 0
         if hasattr(self, "btn_del_sheet"):
             self.btn_del_sheet.setEnabled(has_proj and has_sel)
         # P1-12 各工作区面板按钮与上下文对齐
@@ -1101,31 +1106,40 @@ class MainWindow(QMainWindow):
             self.sheet_list.addItem(item)
 
     def _delete_sheet(self):
-        """删除当前选中的图纸（级联清理实体/工程对象/映射）"""
-        item = self.sheet_list.currentItem()
-        if item is None or self._project_id is None:
+        """删除所选图纸（支持批量）：一次弹窗确认，不再要求输入图纸名。
+
+        P3：多选删除 —— 用 selectedItems() 取全部选中项；单张与多张共用
+        弹窗确认（多张时文案提示数量），确定性动作保持一致。
+        """
+        if self._project_id is None:
+            QMessageBox.information(self, "提示", "请先选择项目")
+            return
+        items = self.sheet_list.selectedItems()
+        if not items:
             QMessageBox.information(self, "提示", "请先在图纸列表中选择要删除的图纸")
             return
-        sid = item.data(Qt.UserRole)
-        # 原始文件名（item.text 含 "[底图] " 前缀与 " (N 实体)" 后缀，不宜用于输入核对）
-        fname = next((s.filename for s in db.get_sheets(self._project_id) if s.id == sid), "")
-        name = fname or item.text()
-        ret = QMessageBox.question(
-            self, "删除图纸",
-            f"确定删除图纸「{name}」？\n\n"
-            "将同时删除该图纸的全部实体、工程对象与 BOQ 映射，且不可恢复。",
+        sheets = {s.id: s for s in db.get_sheets(self._project_id)}
+        sids = [it.data(Qt.UserRole) for it in items if it.data(Qt.UserRole) in sheets]
+        if not sids:
+            return
+        names = [sheets[sid].filename for sid in sids]
+        n = len(sids)
+        label = "、".join(names[:3]) + (f" 等 {n} 张" if n > 3 else "")
+        # 单张/多张同一弹窗确认（去掉 P2 的输名二次确认）
+        if n == 1:
+            msg = (f"确定删除图纸「{names[0]}」？\n\n"
+                   "将同时删除该图纸的全部实体、工程对象与 BOQ 映射，且不可恢复。")
+        else:
+            msg = (f"确定删除选中的 {n} 张图纸？\n\n"
+                   f"{label}\n\n"
+                   "将同时删除各图纸的全部实体、工程对象与 BOQ 映射，且不可恢复。")
+        ret = QMessageBox.warning(
+            self, "删除图纸", msg,
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if ret != QMessageBox.Yes:
             return
-        # P2 防误触：输入图纸名二次确认
-        verify, ok2 = QInputDialog.getText(
-            self, "确认删除图纸",
-            f"请输入图纸名称「{name}」以确认删除：")
-        if not ok2 or verify.strip() != name:
-            self.statusBar().showMessage("取消删除：输入的名称不匹配")
-            return
-        db.delete_sheet(sid)
-        if self._sheet_id == sid:
+        db.delete_sheets(sids)
+        if self._sheet_id in sids:
             self._sheet_id = None
             self._current_blocks = {}
             self.canvas.build([], {})
@@ -1141,7 +1155,7 @@ class MainWindow(QMainWindow):
             self.legend_panel.set_sheet_filter(self._sheet_id)
             self.binding_workbench.load_project(self._project_id)
         self._refresh_enabled()
-        self.statusBar().showMessage(f"已删除图纸：{name}")
+        self.statusBar().showMessage(f"已删除 {n} 张图纸：{label}")
 
     def _on_sheet_context_menu(self, pos):
         """图纸列表右键菜单：重新解析 / 批量重解析 / 设为/取消建筑底图"""
@@ -1160,6 +1174,10 @@ class MainWindow(QMainWindow):
         menu.addAction("重新解析块定义", lambda: self._reparse_sheet(sid))
         menu.addAction("重新解析全部图纸", self._batch_reparse_all)
         menu.addSeparator()
+        n_sel = len(self.sheet_list.selectedItems())
+        if n_sel > 0:
+            menu.addAction(f"删除所选图纸（{n_sel} 张）", self._delete_sheet)
+            menu.addSeparator()
         if is_base:
             menu.addAction("取消建筑底图", self._clear_base_sheet)
         else:
@@ -1200,10 +1218,13 @@ class MainWindow(QMainWindow):
         sheet = next((s for s in sheets if s.id == sid), None)
         if sheet is None:
             return
-        path = sheet.dxf_path or sheet.src_path
+        # 源文件优先（DWG 直读优先）；源丢失才回退旧的转换产物 DXF
+        path = sheet.src_path
+        if not path or not os.path.isfile(path):
+            path = sheet.dxf_path
         if not path or not os.path.isfile(path):
             QMessageBox.warning(self, "重新解析",
-                f"找不到源文件：\n{path}\n\n请确认文件未被移动或删除。")
+                f"找不到源文件：\n{sheet.src_path}\n\n请确认文件未被移动或删除。")
             return
         if getattr(self, "_parse_worker", None) is not None and self._parse_worker.isRunning():
             QMessageBox.information(self, "提示", "已有图纸正在解析，请稍候")
@@ -1599,6 +1620,19 @@ class MainWindow(QMainWindow):
         self._stat_boq = len(items)
         self._update_stats()
         self.statusBar().showMessage(f"BOQ 已导入：{len(items)} 条")
+
+    def open_materials_dialog(self):
+        """打开「主要材料表」对话框：设备块计数 + 导线长度 + BOQ 关联回写。"""
+        if self._project_id is None:
+            QMessageBox.information(self, "提示", "请先选择项目")
+            return
+        from .materials_dialog import MaterialsDialog
+        dlg = MaterialsDialog(self._project_id, self)
+        if dlg.exec() == QDialog.Accepted:
+            # 关联/回写后刷新 BOQ 表（实测数量列可能已更新）
+            self.boq_table.load(db.get_boq_items(self._project_id))
+            self._stat_boq = len(db.get_boq_items(self._project_id))
+            self._update_stats()
 
     def open_project_settings(self):
         """打开「项目设置」对话框：图层/设备规则 + 图纸 BOQ 来源 + 元信息"""
@@ -2066,7 +2100,22 @@ class MainWindow(QMainWindow):
             self, "导出算量清单", "算量清单.xlsx", "Excel (*.xlsx)")
         if not path:
             return
-        n = report.export_report(self._project_id, self._sheet_id, path)
+        # P3：导出对话框选「用实测值覆盖原数量」→ 数量列用 measured_qty
+        from PySide6.QtWidgets import QCheckBox, QDialogButtonBox, QVBoxLayout, QDialog
+        dlg = QDialog(self)
+        dlg.setWindowTitle("导出选项")
+        lay = QVBoxLayout(dlg)
+        chk = QCheckBox("数量列使用实测数量（measured_qty 回写值）")
+        chk.setToolTip("勾选后导出清单的「图纸计量数量」列用已回写的实测数量列（原数量保留对照）")
+        lay.addWidget(chk)
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        lay.addWidget(btns)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        n = report.export_report(self._project_id, self._sheet_id, path,
+                                 use_measured=chk.isChecked())
         QMessageBox.information(self, "导出成功", f"已导出 {n} 条清单 →\n{path}")
 
     # ---------- AI 自动算量（v3 22/23 号） ----------

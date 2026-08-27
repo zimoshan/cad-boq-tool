@@ -75,7 +75,8 @@ CREATE TABLE IF NOT EXISTS boq_item (
     unit TEXT DEFAULT '',
     original_qty REAL DEFAULT 0,
     rule_type TEXT DEFAULT 'length',
-    scale_factor REAL DEFAULT 1.0
+    scale_factor REAL DEFAULT 1.0,
+    measured_qty REAL DEFAULT 0        -- 项目级实测数量（回写，原数量保留对照）
 );
 CREATE INDEX IF NOT EXISTS idx_boq_project ON boq_item(project_id);
 CREATE TABLE IF NOT EXISTS mapping (
@@ -315,6 +316,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE sheet ADD COLUMN blocks_json TEXT DEFAULT ''")
     if "is_base" not in cols:
         conn.execute("ALTER TABLE sheet ADD COLUMN is_base INTEGER DEFAULT 0")
+    # P3：boq_item 实测数量列（工程量回写，旧库补充）
+    bcols = {r[1] for r in conn.execute("PRAGMA table_info(boq_item)").fetchall()}
+    if "measured_qty" not in bcols:
+        conn.execute("ALTER TABLE boq_item ADD COLUMN measured_qty REAL DEFAULT 0")
     # llm_settings 新增 embedding 模型列（旧库补充）
     lcols = {r[1] for r in conn.execute("PRAGMA table_info(llm_settings)").fetchall()}
     if "custom_embedding_model" not in lcols:
@@ -622,6 +627,21 @@ def delete_sheet(sid: int) -> None:
         conn.execute("DELETE FROM sheet WHERE id=?", (sid,))
 
 
+def delete_sheets(sids: list[int]) -> None:
+    """批量删除图纸（级联清理实体/工程对象/映射）。
+
+    与 delete_sheet 同一套级联语义，单事务完成（大项目也要快）。
+    """
+    if not sids:
+        return
+    marks = ",".join("?" for _ in sids)
+    with get_conn() as conn:
+        conn.execute(f"DELETE FROM mapping WHERE sheet_id IN ({marks})", sids)
+        conn.execute(f"DELETE FROM engineering_object WHERE sheet_id IN ({marks})", sids)
+        conn.execute(f"DELETE FROM entity WHERE sheet_id IN ({marks})", sids)
+        conn.execute(f"DELETE FROM sheet WHERE id IN ({marks})", sids)
+
+
 # ---------- 建筑底图 ----------
 # 图层减法原理：机电图图层集合 - 底图图层集合 = 纯设备/管线图层
 # 每个项目只允许一张底图（设新底图时自动取消旧的）
@@ -836,10 +856,10 @@ def replace_boq_items(project_id: int, items: list) -> None:
         conn.execute("DELETE FROM boq_item WHERE project_id=?", (project_id,))
         conn.execute("DELETE FROM mapping WHERE boq_item_id NOT IN (SELECT id FROM boq_item WHERE project_id=?)", (project_id,))
         conn.executemany(
-            "INSERT INTO boq_item(project_id, row_index, code, description, unit, original_qty, rule_type, scale_factor) "
-            "VALUES(?,?,?,?,?,?,?,?)",
+            "INSERT INTO boq_item(project_id, row_index, code, description, unit, original_qty, rule_type, scale_factor, measured_qty) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
             [(project_id, it.row_index, it.code, it.description, it.unit, it.original_qty,
-              it.rule_type, it.scale_factor) for it in items])
+              it.rule_type, it.scale_factor, getattr(it, "measured_qty", 0) or 0) for it in items])
     _invalidate_boq_embedding(project_id)
 
 
@@ -912,10 +932,10 @@ def append_boq_items(project_id: int, items: list) -> int:
     """
     with get_conn() as conn:
         conn.executemany(
-            "INSERT INTO boq_item(project_id, row_index, code, description, unit, original_qty, rule_type, scale_factor) "
-            "VALUES(?,?,?,?,?,?,?,?)",
+            "INSERT INTO boq_item(project_id, row_index, code, description, unit, original_qty, rule_type, scale_factor, measured_qty) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
             [(project_id, it.row_index, it.code, it.description, it.unit, it.original_qty,
-              it.rule_type, it.scale_factor) for it in items])
+              it.rule_type, it.scale_factor, getattr(it, "measured_qty", 0) or 0) for it in items])
     _invalidate_boq_embedding(project_id)
     return len(items)
 
@@ -935,7 +955,8 @@ def get_boq_items(project_id: int) -> list:
     return [BoqItem(**dict(r)) for r in rows]
 
 
-def update_boq_item(item_id: int, rule_type: str = None, scale_factor: float = None, unit: str = None) -> None:
+def update_boq_item(item_id: int, rule_type: str = None, scale_factor: float = None,
+                    unit: str = None, measured_qty: float = None) -> None:
     sets, args = [], []
     if rule_type is not None:
         sets.append("rule_type=?"); args.append(rule_type)
@@ -943,6 +964,8 @@ def update_boq_item(item_id: int, rule_type: str = None, scale_factor: float = N
         sets.append("scale_factor=?"); args.append(scale_factor)
     if unit is not None:
         sets.append("unit=?"); args.append(unit)
+    if measured_qty is not None:
+        sets.append("measured_qty=?"); args.append(measured_qty)
     if not sets:
         return
     args.append(item_id)
@@ -1034,6 +1057,104 @@ def summarize_layers(project_id: int) -> list:
 def clear_mappings_for_item(boq_item_id: int) -> None:
     with get_conn() as conn:
         conn.execute("DELETE FROM mapping WHERE boq_item_id=?", (boq_item_id,))
+
+
+# ---------- 主要材料表统计（项目级） ----------
+# 线性实体类型（与工程/classifier.LINEAR_TYPES 对齐，聚合 SQL 复用）
+_LINEAR_TYPES = ("LINE", "LWPOLYLINE", "POLYLINE", "ARC", "SPLINE")
+# 导线层关键词（layer 名含任一即视为导线层；大小写不敏感）
+WIRE_LAYER_KEYWORDS = ("LINE", "WIRE", "CABLE", "CONDUIT", "KABLO", "TRAY", "线", "导线")
+
+
+def summarize_materials(project_id: int,
+                        wire_keywords: tuple = WIRE_LAYER_KEYWORDS) -> dict:
+    """项目级材料汇总：设备（按块计数）+ 导线（按图层长度）。
+
+    统计口径（方案 A 定稿）：
+    - 范围：项目内全部图纸（跨图累加），长度已 × sheet.scale（图纸比例）
+    - 设备：只按 INSERT 块名计数（用户口径：设备只按块计数）
+    - 导线：图层 = linear 桶（项目配置）∪ 图层名含关键词（默认 "line" 等）
+      → Σ entity.length × scale；**按实际长度显示，不自动换算单位**，
+        换算由 UI/报表的人工换算率提醒承担
+
+    Args:
+        project_id: 项目 id
+        wire_keywords: 导线层名关键词元组/列表
+    Returns:
+        {
+          "devices": [ {block_name, qty, sheet_count, layer} ... ]  按 qty 降序
+          "wires":   [ {layer, entity_count, length, sheet_count} ... ] 按 length 降序
+        }
+    """
+    sheet_ids = [s.id for s in get_sheets(project_id)]
+    if not sheet_ids:
+        return {"devices": [], "wires": []}
+    marks = ",".join("?" for _ in sheet_ids)
+    args = list(sheet_ids)
+
+    # ---- 设备：按块名计数（INSERT 实体） ----
+    devices = []
+    with get_conn() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT block_name,
+                   COUNT(*) AS qty,
+                   COUNT(DISTINCT sheet_id) AS sheet_count,
+                   MIN(layer) AS layer
+            FROM entity
+            WHERE sheet_id IN ({marks}) AND dxf_type='INSERT' AND block_name<>''
+            GROUP BY block_name
+            ORDER BY qty DESC, block_name
+            """,
+            args).fetchall()
+    for r in rows:
+        devices.append({
+            "block_name": r["block_name"],
+            "qty": r["qty"],
+            "sheet_count": r["sheet_count"],
+            "layer": r["layer"] or "",
+            "spec": "",          # 由调用方补全（block_legend / 规格推断）
+        })
+
+    # ---- 导线：linear 桶 ∪ 层名关键词，Σ length×scale ----
+    cfg = get_project_config(project_id)
+    linear_layers = [l for l in cfg.get("layer_rules", {}).get("linear", []) if l]
+    kw_upper = tuple(str(k).upper() for k in (wire_keywords or ()))
+    with get_conn() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT e.layer,
+                   COUNT(*) AS entity_count,
+                   COUNT(DISTINCT e.sheet_id) AS sheet_count,
+                   SUM(ROUND(e.length * s.scale, 4)) AS length_raw
+            FROM entity e
+            JOIN sheet s ON s.id = e.sheet_id
+            WHERE e.sheet_id IN ({marks})
+              AND e.dxf_type IN ('LINE','LWPOLYLINE','POLYLINE','ARC','SPLINE')
+            GROUP BY e.layer
+            """,
+            args).fetchall()
+    linear_upper = {str(l).upper() for l in linear_layers}
+    wires = []
+    seen_layers = set()
+    for r in rows:
+        layer = r["layer"] or ""
+        upper = layer.upper()
+        in_bucket = upper in linear_upper
+        in_kw = any(k and k in upper for k in kw_upper)
+        if not (in_bucket or in_kw):
+            continue
+        if layer in seen_layers:
+            continue
+        seen_layers.add(layer)
+        wires.append({
+            "layer_name": layer,
+            "entity_count": r["entity_count"],
+            "sheet_count": r["sheet_count"],
+            "length_raw": round(r["length_raw"] or 0.0, 4),
+        })
+    wires.sort(key=lambda x: -x["length_raw"])
+    return {"devices": devices, "wires": wires}
 
 
 # ---------- 块图例标定（按项目） ----------

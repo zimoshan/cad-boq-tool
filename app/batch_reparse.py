@@ -1,6 +1,7 @@
 """批量重新解析编排器：三阶段并行流水线。
 
-阶段1 转换：全部 DWG 分组 → 多 ODA 实例并行批量转换（消除每张一次启动的开销）
+阶段1 分流：DWG 先经 ezdwg 秒级探测，可直读的直接解析（不经 ODA 转换）；
+          仅探测失败的才分组 → 多 ODA 实例并行批量转换（消除每张一次启动的开销）
 阶段2 解析：ProcessPoolExecutor 进程池并行 parse_dxf（纯 Python CPU 密集，
             受 GIL 限制线程无加速，必须进程并行）；worker 只解析 + 写 parse_cache，
             不碰数据库（SQLite 单写者，入库由主进程串行完成）
@@ -21,6 +22,7 @@ from pathlib import Path
 
 from . import db
 from .cad import parse_cache
+from .cad import reader as cad_reader
 
 
 def _parse_worker(dxf_path: str, src_path: str):
@@ -80,14 +82,17 @@ class BatchReparseJob:
 
         # ---- 收集源文件：缺失的立即标记，其余按 DWG/DXF 分流 ----
         jobs = []              # [(sheet, dxf_path, src_path)]
-        dwg_srcs = []          # 需 ODA 转换的 (sheet, src_path)
+        dwg_srcs = []          # (sheet, src_path)，稍后 ezdwg 探测分流
         done = 0
         for s in sheets:
-            src = s.src_path or s.dxf_path
+            # 源文件优先（DWG 直读优先）；源丢失才回退旧的转换产物 DXF
+            src = s.src_path
+            if not src or not os.path.isfile(src):
+                src = s.dxf_path
             if not src or not os.path.isfile(src):
                 done += 1
                 stats["error"] += 1
-                stats["errors"].append(f"{s.filename}: 源文件不存在（{src}）")
+                stats["errors"].append(f"{s.filename}: 源文件不存在（{s.src_path}）")
                 self._report(done, total, s.filename, "missing")
                 continue
             if src.lower().endswith(".dwg"):
@@ -95,38 +100,62 @@ class BatchReparseJob:
             else:
                 jobs.append((s, src, src))
 
-        # ---- 阶段1：DWG 批量并行转换 ----
+        # ---- 阶段1：DWG 分流——ezdwg 直读优先，探测失败的才走 ODA 转换 ----
+        direct, conv_srcs = [], []   # direct: (sheet, src)；conv_srcs: [src]
         if dwg_srcs:
             if self._cancelled():
                 stats["cancelled"] = True
                 stats["elapsed"] = time.perf_counter() - t0
                 return stats
-            self._report(done, total, f"转换 {len(dwg_srcs)} 张 DWG…", "convert")
+            self._report(done, total, f"探测 {len(dwg_srcs)} 张 DWG 可读性…", "convert")
+            for s, src in dwg_srcs:
+                probe_err = cad_reader.probe_dwg_support(src)
+                if not probe_err:
+                    direct.append((s, src))
+                else:
+                    import logging
+                    logging.warning("ezdwg 探测不可读，转 ODA: %s | %s", src, probe_err)
+                    conv_srcs.append(src)
+            if direct or conv_srcs:
+                self._report(done, total,
+                             f"直读 {len(direct)} 张 / 需转换 {len(conv_srcs)} 张", "convert")
+
+        for s, src in direct:
+            jobs.append((s, "", src))   # dxf 记空串 = ezdwg 直读，无转换产物
+
+        if conv_srcs:
+            if self._cancelled():
+                stats["cancelled"] = True
+                stats["elapsed"] = time.perf_counter() - t0
+                return stats
             conv_dir = tempfile.mkdtemp(prefix="cadboq_reparse_")
             try:
                 from .cad.dwg import convert_dwgs_batch
                 # 已有可用 DXF（dxf_path 仍存在）的直接复用，避免重复转换
                 need_conv, dxf_map = [], {}
+                sheet_by_src = {}
                 for s, src in dwg_srcs:
+                    sheet_by_src[src] = s
                     old_dxf = s.dxf_path
-                    if old_dxf and os.path.isfile(old_dxf) and \
+                    if src in conv_srcs and old_dxf and os.path.isfile(old_dxf) and \
                             Path(old_dxf).suffix.lower() == ".dxf":
                         dxf_map[src] = old_dxf
-                    else:
+                    elif src in conv_srcs:
                         need_conv.append(src)
                 if need_conv:
                     converted = convert_dwgs_batch(need_conv, conv_dir,
                                                    parallel=min(4, self.workers))
                     dxf_map.update(converted)
-                for s, src in dwg_srcs:
+                for src in conv_srcs:
                     dxf = dxf_map.get(src)
                     if dxf:
-                        jobs.append((s, dxf, src))
+                        jobs.append((sheet_by_src[src], dxf, src))
                     else:
                         done += 1
                         stats["error"] += 1
-                        stats["errors"].append(f"{s.filename}: DWG→DXF 转换失败")
-                        self._report(done, total, s.filename, "error")
+                        stats["errors"].append(
+                            f"{Path(src).name}: DWG→DXF 转换失败（ezdwg 不支持且 ODA 不可用）")
+                        self._report(done, total, Path(src).name, "error")
             finally:
                 # 转换产物放 temp，由系统清理；不删 dxf（入库前还要用）
                 pass

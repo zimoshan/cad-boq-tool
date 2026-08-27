@@ -39,6 +39,37 @@ def add_block_mapping(boq_item_id: int, sheet_id: int, block_name: str) -> tuple
     return added, conflicts
 
 
+def add_project_block_mapping(boq_item_id: int, project_id: int, block_name: str) -> dict:
+    """项目级块映射：block_name 出现过的每张图纸都建 mapping。
+
+    Returns:
+        {"added": int, "sheets": int, "skipped": [sheet_id...]}
+    """
+    added, sheets, skipped = 0, 0, []
+    for s in db.get_sheets(project_id):
+        ents = db.get_entities(s.id, block=block_name)
+        if not ents:
+            skipped.append(s.id)
+            continue
+        a, _ = add_block_mapping(boq_item_id, s.id, block_name)
+        added += a
+        sheets += 1
+    return {"added": added, "sheets": sheets, "skipped": skipped}
+
+
+def add_project_layer_mapping(boq_item_id: int, project_id: int, layer_name: str) -> dict:
+    """项目级图层映射：该图层出现在哪些图纸就给哪些图纸建 mapping。"""
+    added, sheets, skipped = 0, 0, []
+    for s in db.get_sheets(project_id):
+        ents = db.get_entities(s.id, layer=layer_name)
+        if not ents:
+            skipped.append(s.id)
+        a, _ = add_layer_mapping(boq_item_id, s.id, layer_name)
+        added += a
+        sheets += 1
+    return {"added": added, "sheets": sheets, "skipped": skipped}
+
+
 def mapped_entity_ids(boq_item_id: int, sheet_id: int) -> list:
     """某条目已映射的实体 id 列表（entity 模式逐条 + layer/block 展开）"""
     ids = []
