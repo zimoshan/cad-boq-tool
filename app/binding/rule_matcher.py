@@ -15,7 +15,7 @@ import re
 from .. import db
 from ..models import EngineeringObject
 from ..engineering.classifier import infer_system, infer_discipline
-from .text_norm import normalize, compact, contains_spec
+from .text_norm import normalize, compact, contains_spec, string_similarity
 
 # 命中加权
 W_SYSTEM = 0.6        # system 词命中（如 CCTV）
@@ -23,6 +23,8 @@ W_SPEC = 0.4          # 规格命中（如 4MP / DN100）
 W_BLOCK_WORD = 0.3    # 块名分词命中（如 CAM）
 W_LAYER_WORD = 0.25   # 图层名分词命中
 W_CATEGORY = 0.2      # 中文大类命中
+W_STRONG = 0.7        # 块名≈清单描述整串近似（2026-08-28 2.1.2，≥RULE_STRONG_MIN）
+STRONG_SIM_MIN = 0.85  # 整串相似度 ≥ 此值才算「几乎一致」强匹配
 MAX_RESULTS = 5
 
 # 噪声词（块名分词过滤）
@@ -55,21 +57,38 @@ def eo_keywords(eo: EngineeringObject) -> list:
     return kws
 
 
-def _score_boq(boq_text: str, kws: list, system: str, spec: str) -> tuple[float, list]:
+def _score_boq(boq_text: str, kws: list, system: str, spec: str,
+               ref_names: list = None, desc_norm: str = "") -> tuple[float, list]:
     """返回 (score, 命中的关键词)
 
-    字段规范化（P1）：文本先经 text_norm 规范（全角→半角/UPPER），规格命中
-    用 ``contains_spec`` 支持 ``4MP`` vs ``4 MP``/``DN 100`` vs ``DN100`` 等
-    隔符差异，避免子串启发式因一个空格失配。
+    字段规范化（P1）：文本先经 text_norm 规范（全角→半角/大写），规格命中
+    用 ``contains_spec`` 支持 ``4MP`` == ``4 MP``/``DN 100`` == ``DN100`` 等
+    隔符差异，避免字符按字符串启发式因一个空格失配。
+
+    短语级加权（2.1.2）：把 block_name/layer_name 与 BOQ 的 **Description**
+    （不含 code/unit，避免前缀稀释）做整串近似（``string_similarity``，
+    ≥0.85 即「几乎完全一致」），命中直接给 ``W_STRONG`` 强分——块名是最可靠的
+    判定依据，不应只按分词加权。
     """
     text = normalize(boq_text)
     comp_text = compact(boq_text)
+    # 短语比较基线：优先 Description 整串，缺省回退到 code+desc+unit
+    phrase_base = desc_norm or text
     hits = []
     score = 0.0
+    # 短语级：块名 与 Description 高度近似 → 强分 + 计入 reason
+    for ref in (ref_names or []):
+        if not ref:
+            continue
+        sim = string_similarity(ref, phrase_base)
+        if sim >= STRONG_SIM_MIN:
+            hits.append(f"块名≈清单描述({sim:.0%})")
+            score += W_STRONG
+            break
     for kw in kws:
         if not kw:
             continue
-        # 关键词（块名/图层/system 词）在规范文本中子串命中
+        # 关键词（块名/分层/system 词）在规范文本中子串命中
         if kw in text or kw in comp_text:
             hits.append(kw)
             if system and kw == system.upper():
@@ -136,7 +155,10 @@ def match_rule(project_id: int, eo: EngineeringObject, items: list = None) -> li
         # discipline 强过滤：EO 已知 discipline 且 BOQ 明显属于其他专业 → 跳过
         if disc and _boq_discipline_conflict(it, disc):
             continue
-        score, hits = _score_boq(text, kws, sys_name, eo.specification)
+        score, hits = _score_boq(
+            text, kws, sys_name, eo.specification,
+            ref_names=[eo.block_name, eo.layer_name],
+            desc_norm=normalize(it.description or ""))
         if score > 0 and hits:
             reason = f"规则命中: {', '.join(hits[:4])}（BOQ {it.code}）"
             scored.append((it.id, score, reason))

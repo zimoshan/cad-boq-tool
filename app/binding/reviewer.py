@@ -40,6 +40,55 @@ def _write_symbol_knowledge(project_id: int, eo, boq_item_id: int) -> None:
         pass
 
 
+def _accepted_block_boq(project_id: int, block_name: str, layer_name: str,
+                        exclude_cid: int = None) -> int | None:
+    """该 block/layer 已被确认（ACCEPTED）到的 BOQ item 唯一性校验（2.3.2）。
+
+    Returns:
+        已确认绑定的 boq_item_id；未绑定返回 None。
+    排除口径：1) ACCEPTED 候选（同 block/layer 的工程对象）；2) 正式 mapping。
+    排除本候选自身（exclude_cid），防止重复确认同一组合自锁。
+    """
+    if not block_name and not layer_name:
+        return None
+    eo_conds, args = [], [project_id]
+    if block_name:
+        eo_conds.append("block_name=?"); args.append(block_name)
+    if layer_name:
+        eo_conds.append("layer_name=?"); args.append(layer_name)
+    eo_where = " OR ".join(eo_conds)
+    with db.get_conn() as conn:
+        # 1) ACCEPTED 候选
+        sql = (
+            "SELECT DISTINCT boq_item_id FROM binding_candidate "
+            "WHERE status='ACCEPTED' AND project_id=? "
+            "AND engineering_object_id IN ("
+            "  SELECT id FROM engineering_object WHERE " + eo_where + ")")
+        params = list(args)
+        if exclude_cid is not None:
+            sql += " AND id<>?"
+            params.append(exclude_cid)
+        rows = conn.execute(sql, params).fetchall()
+        # 2) mapping（block/layer 同名，同项目）
+        msql = (
+            "SELECT DISTINCT m.boq_item_id FROM mapping m "
+            "JOIN sheet s ON s.id=m.sheet_id "
+            "WHERE s.project_id=? AND (")
+        mparams = [project_id]
+        mconds = []
+        if block_name:
+            mconds.append("m.mode='block' AND m.block_name=?")
+            mparams.append(block_name)
+        if layer_name:
+            mconds.append("m.mode='layer' AND m.layer_name=?")
+            mparams.append(layer_name)
+        if not mconds:
+            return None
+        msql += " OR ".join(mconds) + ")"
+        rows += conn.execute(msql, mparams).fetchall()
+    return rows[0]["boq_item_id"] if rows else None
+
+
 def confirm_binding(project_id: int, candidate_id: int,
                     project_scale: float = 1.0) -> dict:
     """人工确认候选 → ACCEPTED → 写正式 mapping → 重算。
@@ -47,7 +96,7 @@ def confirm_binding(project_id: int, candidate_id: int,
     Returns:
         {"candidate_id", "mapping_mode", "mapping_id", "boq_item_id", "qty", "count"}
     Raises:
-        ReviewError: 候选不存在 / 非 PENDING / 工程对象缺失
+        ReviewError: 候选不存在 / 非 PENDING / 工程对象缺失 / 块已绑定另一 BOQ
     """
     c = db.get_candidate(candidate_id)
     if not c:
@@ -58,6 +107,18 @@ def confirm_binding(project_id: int, candidate_id: int,
     eo = db.get_engineering_object(c.engineering_object_id)
     if not eo:
         raise ReviewError(f"工程对象缺失: {c.engineering_object_id}")
+
+    # 图块↔BOQ 唯一性校验（2.3.2）：同名块/图层已确认到另一条目 → 拒绝重复绑定
+    existing = _accepted_block_boq(project_id, eo.block_name, eo.layer_name,
+                                   exclude_cid=candidate_id)
+    if existing is not None and existing != c.boq_item_id:
+        bi = db.get_boq_items(project_id)
+        pros = {b.id: b for b in bi}
+        old = pros.get(existing)
+        old_code = f"{old.code} {old.description}"[:40] if old else str(existing)
+        raise ReviewError(
+            f"图块 {eo.block_name or eo.layer_name} 已绑定到 BOQ#{existing}（{old_code}）；"
+            f"一图块只能对应一个 BOQ 子项，请勿重复绑定")
 
     # 写正式 mapping：equipment→block 模式；linear/area→layer 模式（任务八）
     if eo.object_type == "equipment" and eo.block_name:
@@ -82,9 +143,12 @@ def confirm_binding(project_id: int, candidate_id: int,
         if (not bi.unit or bi.unit == "个") and eo.unit:
             db.update_boq_item(bi.id, unit=eo.unit or bi.unit)
 
-    # 状态流转：确认 + 同 EO 其他候选 SUPERSEDED
+    # 状态流转：确认 + 同 EO 其他候选 SUPERSEDED + 跨图纸同名块候选 SUPERSEDED（2.3.1）
     db.update_candidate_status(candidate_id, cand.STATUS_ACCEPTED)
     db.supersede_candidates(eo.id, exclude_cid=candidate_id)
+    db.supersede_candidates_by_anchor(
+        project_id, block_name=eo.block_name, layer_name=eo.layer_name,
+        exclude_cid=candidate_id)
 
     # 确定性重算
     from .resolver import recompute

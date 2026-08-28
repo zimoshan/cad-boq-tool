@@ -283,6 +283,48 @@ def _open_db() -> sqlite3.Connection:
     raise sqlite3.OperationalError("get_conn: 无法打开 DB — 第二次重试也失败")
 
 
+def db_usage() -> dict:
+    """数据库碎片诊断（P1-2）：文件体积 / freelist 占用 / 有无可回收空间。
+
+    Returns:
+        {"file_bytes", "page_size", "freelist_pages", "freelist_bytes",
+         "waste_ratio", "exists"}
+    """
+    sz = os.path.getsize(str(DB_PATH)) if os.path.exists(str(DB_PATH)) else 0
+    if not sz:
+        return {"file_bytes": 0, "free_pages": 0, "freelist_bytes": 0,
+                "waste_ratio": 0.0, "exists": False}
+    with get_conn() as conn:
+        page_size = conn.execute("PRAGMA page_size").fetchone()[0]
+        free_pages = conn.execute("PRAGMA freelist_count").fetchone()[0]
+    freelist_bytes = page_size * free_pages
+    return {"file_bytes": sz, "free_pages": free_pages,
+            "freelist_bytes": freelist_bytes,
+            "waste_ratio": freelist_bytes / sz if sz else 0.0,
+            "exists": True}
+
+
+def vacuum_database() -> dict:
+    """VACUUM 回收空闲页（1.6GB → ~170MB 场景）。单独连接执行，返回 before/after。
+
+    VACUUM 不能用线程池连接（同线程被事务占用会报 'cannot VACUUM from within a
+    transaction'），这里新建专用连接。大库（GB 级）可能耗时数秒~数十秒，调用方
+    应在后台线程跑并显示进度。
+    """
+    before = db_usage()["file_bytes"]
+    t0 = time.perf_counter()
+    conn = sqlite3.connect(str(DB_PATH))
+    try:
+        conn.execute("PRAGMA busy_timeout=15000")
+        conn.execute("VACUUM")
+    finally:
+        conn.close()
+    after = db_usage()["file_bytes"]
+    return {"before_bytes": before, "after_bytes": after,
+            "freed_bytes": max(0, before - after),
+            "duration_ms": round((time.perf_counter() - t0) * 1000)}
+
+
 def get_conn() -> sqlite3.Connection:
     """稳健版连接：WAL 时降级 DELETE 模式；同线程复用连接（性能优化）。
 
@@ -1502,7 +1544,7 @@ def update_candidate_status(cid: int, status: str) -> None:
 
 
 def supersede_candidates(engineering_object_id: int, exclude_cid: int = None) -> None:
-    """同一工程对象的旧 PENDING 候选全部置 SUPERSEDED（新候选生成时调用）"""
+    """同一工程对象的旧 PENDING 候选置 SUPERSEDED（新候选生成时调用）"""
     with get_conn() as conn:
         if exclude_cid is None:
             conn.execute(
@@ -1514,6 +1556,41 @@ def supersede_candidates(engineering_object_id: int, exclude_cid: int = None) ->
                 "UPDATE binding_candidate SET status='SUPERSEDED' "
                 "WHERE engineering_object_id=? AND status='PENDING' AND id<>?",
                 (engineering_object_id, exclude_cid))
+
+
+def supersede_candidates_by_anchor(project_id: int, block_name: str = "",
+                                   layer_name: str = "", exclude_cid: int = None) -> int:
+    """跨图纸 supersede（2026-08-28 绑定增强 2.3.1）：同名块/同图层全部 EO 的 PENDING
+    候选一次性置 SUPERSEDED。
+
+    确认某块绑定到 BOQ 后，同一 block_name 出现在其他图纸的 EO 候选也该消失——
+    一图块对应一个 BOQ 子项（跨图纸同名的也要消失）。
+    若同时给 block_name 与 layer_name，命中任一即 supersede（并集）。
+
+    Returns:
+        受影响候选数
+    """
+    conds, args = [], []
+    if block_name:
+        conds.append("block_name=?"); args.append(block_name)
+    if layer_name:
+        conds.append("layer_name=?"); args.append(layer_name)
+    if not conds:
+        return 0
+    where = " OR ".join(conds)
+    sql = (
+        "UPDATE binding_candidate SET status='SUPERSEDED' "
+        "WHERE project_id=? AND status='PENDING' "
+        "AND engineering_object_id IN ("
+        "  SELECT id FROM engineering_object WHERE project_id=? AND (" + where + "))"
+    )
+    params = [project_id, project_id] + args
+    if exclude_cid is not None:
+        sql += " AND id<>?"
+        params.append(exclude_cid)
+    with get_conn() as conn:
+        cur = conn.execute(sql, params)
+        return cur.rowcount
 
 
 def delete_candidates_for_item(boq_item_id: int) -> None:

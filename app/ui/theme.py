@@ -737,17 +737,32 @@ MAIN_QSS = generate_main_qss()
 # Icon font（v3 1:1：Segoe Fluent Icons，Win11 自带；缺字体回退 None）
 # ============================================================
 
+_ICON_FONT_CACHE: str | None = None
+_ICON_FONT_CACHE_SET = False
+
+
 def icon_font_family() -> str | None:
-    """返回可用的 Fluent 图标字体族；都没有则 None（调用方回退文字标签）。"""
+    """返回可用的 Fluent 图标字体族；都没有则 None（调用方回退文字标签）。
+
+    用 QFont+QFontInfo 窄探测，避免调用 QFontDatabase.families() 全量枚举：
+    后者会触发 Qt 对系统里 legacy 位图字体（Fixedsys/fonts.fon，Win11 已无法
+    创建字体面）的 DirectWrite 探测，启动时打印 CreateFontFaceFromHDC 告警。
+    """
+    global _ICON_FONT_CACHE, _ICON_FONT_CACHE_SET
+    if _ICON_FONT_CACHE_SET:
+        return _ICON_FONT_CACHE
+    _ICON_FONT_CACHE_SET = True
     try:
-        from PySide6.QtGui import QFontDatabase
-        fams = set(QFontDatabase.families())
+        from PySide6.QtGui import QFont, QFontInfo
         for fam in ("Segoe Fluent Icons", "Segoe MDL2 Assets"):
-            if fam in fams:
-                return fam
+            # QFontInfo.family() 返回实际解析到的族：字体缺失时 Qt 会替换为
+            # 其他族，此时与目标名不相等，据此判断可用性（无需全量枚举）。
+            if QFontInfo(QFont(fam)).family() == fam:
+                _ICON_FONT_CACHE = fam
+                break
     except Exception:
         pass
-    return None
+    return _ICON_FONT_CACHE
 
 
 # 常用图标码点（Segoe MDL2/Fluent Assets）

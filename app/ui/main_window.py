@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import tempfile
+import threading
 import time
 
 from PySide6.QtCore import Qt, QThread, Signal, QSettings, QTimer
@@ -73,7 +74,7 @@ _HELP_HTML = """
 <ul style="margin-top:2px;">
 <li>「<b>AI 算量</b>」→ 对当前图纸自动识别设备并生成候选；结果在「更多 → AI 算量结果」复核</li>
 <li>「绑定工作台」审核队列每行有<b>行内 ✓确认 / ✗拒绝</b>按钮，无需先选中行</li>
-<li>LLM 增强 / 补充分类需配置后端：点左下角「<b>LLM: —</b>」标签或顶栏「<b>⚙ LLM</b>」</li>
+<li>LLM 增强 / 补充分类需配置后端：点左下角「<b>LLM: —</b>」标签或「更多 → LLM 设置…」</li>
 </ul>
 
 <h4 style="margin:14px 0 6px;">快捷键</h4>
@@ -94,10 +95,14 @@ _HELP_HTML = """
 
 <p style="color:#889099; font-size:12px; margin-top:10px;">
 问题排查：解析 DWG 失败请安装 ODA File Converter（免费）并重开；
-LLM 不可用请检查「⚙ LLM」设置中的后端地址与服务状态。
+LLM 不可用请检查「更多 → LLM 设置…」中的后端地址与服务状态。
 </p>
 </div>
 """
+
+# rail 按钮序 → right_tabs 页签索引（v3 布局：绑定0/清单1/计量2/实体属性4/记录6）
+# 图例标定(3) / 项目属性(5) 不在 rail，经「更多 ▾」菜单或 Ctrl+1..6 到达。
+RAIL_TAB_INDEX = [0, 1, 2, 4, 6]
 
 
 class _AiTakeoffWorker(QThread):
@@ -205,6 +210,64 @@ class _BatchReparseWorker(QThread):
         except Exception as e:  # noqa: BLE001
             import traceback
             self.failed.emit(f"{e}\n{traceback.format_exc()}")
+
+
+class _VacuumWorker(QThread):
+    """数据库 VACUUM 后台线程（P1-2）：大库（GB 级）耗时数秒~数十秒，不能卡 UI。"""
+    finished_ok = Signal(dict)     # {"before_bytes", "after_bytes", "freed_bytes", "duration_ms"}
+    failed = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+    def run(self):
+        try:
+            res = db.vacuum_database()
+            self.finished_ok.emit(res)
+        except Exception as e:
+            import traceback
+            self.failed.emit(f"{e}\n{traceback.format_exc()}")
+
+
+class _SheetLoadWorker(QThread):
+    """切图数据后台加载（P1-1）：blocks_json 解析 + DB 实体/图层统计不进 UI 线程。
+
+    注意：QGraphicsItem 只能在 GUI 线程创建/删除，因此真正的重头
+    （canvas.build 逐实体建图形项）仍回主线程分批执行——配合
+    canvas.build 的 progress_cb / cancel_event，UI 显示进度条且不冻结。
+    本类只把「DB 读取 + JSON 反序列化」挪到子线程（实测 ~0.7s 的卡顿来源）。
+    """
+    data_ready = Signal(object)      # dict: {blocks, entities, layer_colors, layers, blocks_info}
+    failed = Signal(int, str)        # (sheet_id, err)
+
+    def __init__(self, sheet_id: int, blocks_json: str, parent=None):
+        super().__init__(parent)
+        self._sheet_id = sheet_id
+        self._blocks_json = blocks_json
+
+    def run(self):
+        try:
+            blocks = json.loads(self._blocks_json) if self._blocks_json else {}
+            entities = db.get_entities(self._sheet_id)
+            layer_colors = db.layer_color_map(self._sheet_id)
+            layers = db.distinct_layers(self._sheet_id)
+            blocks_info = db.distinct_blocks(self._sheet_id)
+            self.data_ready.emit({
+                "blocks": blocks,
+                "entities": entities,
+                "layer_colors": layer_colors,
+                "layers": layers,
+                "blocks_info": blocks_info,
+            })
+        except Exception as e:
+            import traceback
+            self.failed.emit(self._sheet_id, f"{e}\n{traceback.format_exc()}")
+        finally:
+            # 子线程连接用完即关（线程注销，防 sqlite 连接泄漏）
+            try:
+                db._close_thread_conn()
+            except Exception:
+                pass
 
 
 class _ParseCancelled(Exception):
@@ -318,6 +381,8 @@ class MainWindow(QMainWindow):
 
         self._project_id = None
         self._sheet_id = None
+        self._sheet_load_seq = 0          # 切图序号：丢弃过期后台加载结果（P1-1）
+        self._sheet_cancel_event = None   # 取消当前正在构建的画布（P1-1）
         self._reparse_sid = None  # 重新解析模式：>0 时 _on_parse_done 更新而非新建
         self._current_item_id = None
         self._current_item_desc = ""
@@ -346,6 +411,8 @@ class MainWindow(QMainWindow):
         self._reload_projects()
         self._restore_settings()
         self._maybe_show_welcome()
+        # 启动后短暂延迟检查数据库碎片（P1-2）：空闲页占比过高 → 提示整理
+        QTimer.singleShot(800, self._check_db_fragmentation)
 
     def _maybe_show_welcome(self):
         """首次启动（且尚无任何项目）时展示一次性引导；离屏测试环境跳过。"""
@@ -366,8 +433,8 @@ class MainWindow(QMainWindow):
             "2. 「打开图纸」载入 DWG/DXF（或「更多 → 批量导入文件夹」）\n"
             "3. 「更多 → 导入 BOQ」导入 Excel 工程量清单\n"
             "4. 「AI 算量」自动识别设备并生成候选；或用「绑定工作台」人工复核确认\n\n"
-            "右侧工作区有 7 个页面：绑定工作台 / BOQ 清单 / 计量 / 图例标定 /\n"
-            "实体属性 / 项目属性 / 操作记录（右栏 rail 或 Ctrl+1..6 切换）。\n"
+            "右侧工作区有 7 个页面：绑定 / 清单 / 计量 / 属性 / 记录（右栏\n"
+            "rail），图例标定与项目属性在「更多 ▾」菜单（亦可 Ctrl+1..6 切换）。\n"
             "更多说明见「更多 → 使用说明」(F1)。")
         box.setStandardButtons(QMessageBox.Ok)
         box.setWindowModality(Qt.NonModal)
@@ -380,6 +447,16 @@ class MainWindow(QMainWindow):
         root = QVBoxLayout(central)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
+
+        # 面板提前实例化：_build_topbar 的 AI 菜单引用了 binding_workbench /
+        # _more_actions，而各面板是无副作用的纯容器，先建不影响后续布局。
+        self._more_actions: dict[str, object] = {}
+        self.mapping_panel = MappingPanel()
+        self.legend_panel = LegendPanel()
+        self.binding_workbench = BindingWorkbench()
+        self.project_properties = ProjectPropertiesPanel()
+        self.entity_properties = EntityPropertiesPanel()
+        self.history_panel = HistoryPanel()
 
         # 顶部品牌栏（v2：替代菜单栏）
         root.addWidget(self._build_topbar())
@@ -500,7 +577,7 @@ class MainWindow(QMainWindow):
 
         # 右栏：图标 rail + 工作区页面（v3，main.html 对齐）
         # 结构：rail(52px 图标/短词按钮) + QTabWidget(原生 tabBar 隐藏)。
-        # 三入口镜像：rail 按钮 / 画布工具条工作区按钮 / Ctrl+1..6 → 同一 setCurrentIndex。
+        # 工具条与 rail 解耦（各司其职）：rail 按钮 / Ctrl+1..6 切面板，工具条只管画布模式。
         right = QWidget()
         rv = QHBoxLayout(right)
         rv.setContentsMargins(0, 0, 0, 0)
@@ -521,14 +598,23 @@ class MainWindow(QMainWindow):
         bv = QVBoxLayout(self.boq_page)
         bv.setContentsMargins(6, 6, 6, 0)
         bv.setSpacing(6)
+        # 顶行：清单计数 + 「重新导入」（原型 main.html:100）
+        bh = QHBoxLayout()
+        bh.setSpacing(6)
+        self.boq_count_label = QLabel("共 0 条清单项")
+        self.boq_count_label.setStyleSheet(
+            f"color:{T.TEXT_SECONDARY}; font-size:{T.FONT_SIZE_CAPTION}px;")
+        bh.addWidget(self.boq_count_label)
+        bh.addStretch(1)
+        self.btn_boq_reimport = QPushButton("重新导入")
+        self.btn_boq_reimport.setObjectName("linkBtn")
+        self.btn_boq_reimport.setCursor(Qt.PointingHandCursor)
+        self.btn_boq_reimport.setToolTip("从 Excel 重新导入 BOQ 清单（覆盖当前清单）")
+        self.btn_boq_reimport.clicked.connect(self.import_boq)
+        bh.addWidget(self.btn_boq_reimport)
+        bv.addLayout(bh)
         bv.addWidget(self.boq_search)
         bv.addWidget(self.boq_table, 1)
-        self.mapping_panel = MappingPanel()
-        self.legend_panel = LegendPanel()
-        self.binding_workbench = BindingWorkbench()
-        self.project_properties = ProjectPropertiesPanel()
-        self.entity_properties = EntityPropertiesPanel()
-        self.history_panel = HistoryPanel()
         self.right_tabs = QTabWidget()
         self.right_tabs.setMovable(False)
         self.right_tabs.addTab(self.binding_workbench, "绑定工作台")
@@ -539,16 +625,8 @@ class MainWindow(QMainWindow):
         self.right_tabs.addTab(self.project_properties, "项目属性")
         self.right_tabs.addTab(self.history_panel, "操作记录")
         self.right_tabs.tabBar().hide()
-        # 模式→标签页映射（v3 顺序：绑定/BOQ/计量/图例/属性/项目/记录）
-        self._mode_tab_map = {
-            "browse": 1,    # BOQ 清单
-            "mapping": 2,   # 计量
-            "legend": 3,    # 图例标定
-            "ai": 0,        # 绑定工作台
-            "props": 5,     # 项目属性
-        }
         pages.addWidget(self.right_tabs)
-        # rail/工具条镜像同步（rail 构建时 right_tabs 尚未存在，故在此接线）
+        # rail 高亮同步（right_tabs 构建完成后再接线；工具条已解耦不参与）
         self.right_tabs.currentChanged.connect(self._on_right_tab_changed)
         self._rail_buttons[0].setChecked(True)
         right.setMinimumWidth(330)
@@ -627,7 +705,7 @@ class MainWindow(QMainWindow):
         return "info"
 
     def _build_topbar(self) -> QWidget:
-        """v3 顶栏（main.html 1:1）：品牌块 / 项目 / 新建 / 打开 / AI 算量▾ / 导出 / ⚙ / 更多▾。"""
+        """v3 顶栏（main.html 1:1）：品牌块 / 项目 / 新建 / 打开 / AI 算量▾ / 导出 / 更多▾。"""
         bar = QWidget()
         bar.setObjectName("topbar")
         bar.setFixedHeight(T.TOPBAR_HEIGHT)
@@ -702,6 +780,14 @@ class MainWindow(QMainWindow):
         ai_menu.addAction("批量识别全部图纸", self.ai_takeoff_folder)
         ai_menu.addSeparator()
         ai_menu.addAction("从文件夹批量导入", self.import_folder_drawings)
+        ai_menu.addSeparator()
+        # 绑定候选流水线（v3 重设计删工具栏后必须在此提供入口，否则候选永远无法生成）
+        self._more_actions["extract_objects"] = ai_menu.addAction(
+            "提取工程对象", self.binding_workbench.extract_objects)
+        self._more_actions["gen_candidates"] = ai_menu.addAction(
+            "生成绑定候选", self.binding_workbench.run_generate)
+        self._more_actions["llm_classify"] = ai_menu.addAction(
+            "LLM 补充分类", self.binding_workbench.run_llm_classify)
         self.btn_ai.setMenu(ai_menu)
         h.addWidget(self.btn_ai)
 
@@ -714,7 +800,7 @@ class MainWindow(QMainWindow):
 
         # ---- 更多▾：低频工具 + 视图/过滤（原工具栏入口收拢于此） ----
         more_menu = QMenu(self)
-        self._more_actions: dict[str, object] = {}
+        # _more_actions 已在 _build_ui 顶部初始化（AI 菜单先于此处使用）
         self._more_actions["import_boq"] = more_menu.addAction(
             "导入 BOQ", self.import_boq)
         self._more_actions["repair_boq"] = more_menu.addAction(
@@ -726,12 +812,14 @@ class MainWindow(QMainWindow):
         more_menu.addSeparator()
         self._more_actions["legend"] = more_menu.addAction(
             "图例标定", self.focus_legend)
-        self._more_actions["binding"] = more_menu.addAction(
-            "绑定工作台", self.focus_binding)
+        self._more_actions["project_properties"] = more_menu.addAction(
+            "项目属性…", self.focus_project_properties)
         self._more_actions["settings"] = more_menu.addAction(
             "项目设置…", self.open_project_settings)
         self._more_actions["llm"] = more_menu.addAction(
             "LLM 设置…", self.open_llm_settings)
+        self._more_actions["db_maintenance"] = more_menu.addAction(
+            "数据库瘦身 (VACUUM)…", self.open_db_maintenance)
         more_menu.addSeparator()
         # 视图 / 实体过滤：占位菜单，_build_ui 中 canvas_toolbar 建好后填充
         self._view_menu = more_menu.addMenu("视图")
@@ -743,27 +831,13 @@ class MainWindow(QMainWindow):
         btn_more.setToolTip("低频工具 / 视图 / 实体过滤 / 设置")
         h.addWidget(btn_more)
 
-        # ---- ⚙ 设置齿轮（项目设置 / LLM 设置） ----
-        gear = QPushButton(T.ICONS.get("settings", "⚙"))
-        gear.setObjectName("iconBtn")
-        gear.setToolTip("设置：项目规则 / LLM 后端")
-        gear_menu = QMenu(self)
-        gear_menu.addAction("项目设置…", self.open_project_settings)
-        gear_menu.addAction("LLM 设置…", self.open_llm_settings)
-        gear.setMenu(gear_menu)
-        if T.icon_font_family():
-            f = T.make_icon_font(15)
-            if f:
-                gear.setFont(f)
-        h.addWidget(gear)
-
         return bar
 
     def _build_right_rail(self) -> QWidget:
-        """右栏图标 rail（v3）：与 right_tabs 索引一一对应的镜像入口。
+        """右栏图标 rail（v3）：绑定 / 清单 / 计量 / 属性 / 记录 5 项。
 
-        按钮顺序 = right_tabs 顺序：绑定 / 清单 / 计量 / 图例 / 属性 / 项目 / 记录。
-        （第一步先短文字按钮，图标资源在后续步骤替换为 SVG。）
+        通过模块级 RAIL_TAB_INDEX 显式映射到 right_tabs 页签索引（非一一对应）。
+        图例标定 / 项目属性经「更多 ▾」菜单或 Ctrl+1..6 到达。
         """
         from PySide6.QtWidgets import QToolButton, QButtonGroup
 
@@ -774,9 +848,9 @@ class MainWindow(QMainWindow):
         v.setContentsMargins(4, 8, 4, 8)
         v.setSpacing(4)
 
-        labels = ["绑定", "清单", "计量", "图例", "属性", "项目", "记录"]
+        labels = ["绑定", "清单", "计量", "属性", "记录"]
         tips = ["绑定工作台：AI/规则候选审核", "BOQ 清单", "计量映射",
-                "图例标定", "实体属性（当前选择）", "项目属性", "操作记录"]
+                "实体属性（当前选择）", "操作记录"]
         self._rail_group = QButtonGroup(self)
         self._rail_group.setExclusive(True)
         self._rail_buttons: list[QToolButton] = []
@@ -787,7 +861,8 @@ class MainWindow(QMainWindow):
             btn.setCheckable(True)
             btn.setToolTip(tip)
             btn.setCursor(Qt.PointingHandCursor)
-            btn.clicked.connect(lambda _checked=False, idx=i: self.right_tabs.setCurrentIndex(idx))
+            btn.clicked.connect(
+                lambda _checked=False, idx=i: self.right_tabs.setCurrentIndex(RAIL_TAB_INDEX[idx]))
             self._rail_group.addButton(btn, i)
             self._rail_buttons.append(btn)
             v.addWidget(btn)
@@ -804,15 +879,26 @@ class MainWindow(QMainWindow):
         return rail
 
     def _on_right_tab_changed(self, idx: int):
-        """tab 切换的唯一汇合点：rail 高亮 + 工具条工作区按钮镜像（不回发信号）。"""
-        if 0 <= idx < len(self._rail_buttons):
-            btn = self._rail_buttons[idx]
-            btn.setChecked(True)
-        self.canvas_toolbar.sync_context_from_tab(idx)
+        """tab 切换的唯一汇合点：rail 高亮（工具条已解耦，不再镜像）。"""
+        try:
+            self._rail_buttons[RAIL_TAB_INDEX.index(idx)].setChecked(True)
+        except ValueError:
+            # 非 rail 面板（图例标定 / 项目属性）：清空 rail 高亮避免误导
+            # （exclusive QButtonGroup 禁止直接取消勾选，先临时解除独占）
+            self._rail_group.setExclusive(False)
+            for btn in self._rail_buttons:
+                btn.setChecked(False)
+            self._rail_group.setExclusive(True)
 
     def _update_stats(self):
         """更新底部状态栏：项目 / 图纸 / 工作模式 / 统计信息"""
         self._refresh_status_breadcrumb()
+
+    def _refresh_boq_count(self):
+        """BOQ 页头行计数（原型「共 N 条清单项」）。"""
+        if hasattr(self, "boq_count_label"):
+            self.boq_count_label.setText(
+                f"共 {getattr(self, '_stat_boq', 0)} 条清单项")
 
     # ---------- 状态消息中心（P0-7） ----------
     def _on_status_message(self, text: str):
@@ -886,7 +972,6 @@ class MainWindow(QMainWindow):
 
         self.mapping_panel.deleteMappingRequested.connect(self._on_delete_mapping)
         self.mapping_panel.recalcRequested.connect(lambda: self._recalc_and_refresh())
-        self.mapping_panel.exportRequested.connect(self.export_report)
 
         # 图例标定面板
         self.legend_panel.locateRequested.connect(self._on_legend_locate)
@@ -899,6 +984,8 @@ class MainWindow(QMainWindow):
             lambda t: self.show_toast(t, self._toast_kind(t)))
         self.binding_workbench.bindingChanged.connect(self._recalc_and_refresh)
         self.binding_workbench.bindingChanged.connect(self._refresh_sheet_badges)
+        # 绑定工作台内部 worker（生成候选/LLM 分类）经 busyChanged 汇入统一 busy 收口
+        self.binding_workbench.busyChanged.connect(self._set_busy)
 
         # Phase 1 工具栏
         self.canvas_toolbar.modeChanged.connect(self._on_mode_changed)
@@ -955,11 +1042,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"模式已切换：{mode}（{ {'pick':'双击或框选实体待分配','layer':'在图层树右键批量关联','block':'在块树右键批量关联（计数规则）'}.get(mode,'') }）")
 
     def _on_context_mode_changed(self, mode: str):
-        # 自动切换右侧工作区标签
-        tab_idx = self._mode_tab_map.get(mode)
-        if tab_idx is not None and tab_idx < self.right_tabs.count():
-            self.right_tabs.setCurrentIndex(tab_idx)
-        # 更新状态栏面包屑
+        # 工具条模式只改画布工作上下文（v3 原型语义），不再镜像切换右栏面板
         self._refresh_status_breadcrumb()
 
     def _refresh_status_breadcrumb(self):
@@ -1077,8 +1160,17 @@ class MainWindow(QMainWindow):
             self._project_id = None
         self._refresh_enabled()
 
+    def _set_busy(self, busy: bool):
+        """统一 busy 收口（P0 C1 修复）：后台任务运行期间禁用易冲突入口。
+
+        所有 worker 的启动/结束回调都经此置位：True 时按钮置灰防止
+        并发触发多个 QThread 造成数据竞争；任务结束自动恢复。
+        """
+        self._busy = busy
+        self._refresh_enabled()
+
     def _refresh_enabled(self):
-        """上下文统一启用态：无项目→项目级按钮禁用；无图纸→图纸级按钮禁用。
+        """上下文统一启用态：全部→无项目→项目级按钮禁用；有图纸→图纸级按钮禁用。
 
         P1-12 的单一真相源：所有主窗口按钮/菜单动作都从这里取 enable 状态，
         避免各自散落判断。busy=True 时（后台任务运行中）一并禁用相关入口。
@@ -1090,19 +1182,20 @@ class MainWindow(QMainWindow):
             self.btn_open.setEnabled(proj_ready)
         if hasattr(self, "btn_ai"):
             self.btn_ai.setEnabled(proj_ready)
-        if hasattr(self, "btn_settings"):
-            self.btn_settings.setEnabled(proj_ready)
         if hasattr(self, "btn_add_sheet"):
             self.btn_add_sheet.setEnabled(proj_ready)
-        for key in ("import_folder", "import_boq", "repair_boq",
-                    "export_layers", "materials", "legend", "binding"):
+        if hasattr(self, "btn_boq_reimport"):
+            self.btn_boq_reimport.setEnabled(proj_ready)
+        for key in ("import_boq", "repair_boq", "export_layers",
+                    "materials", "legend", "project_properties", "settings",
+                    "extract_objects", "gen_candidates", "llm_classify"):
             act = getattr(self, "_more_actions", {}).get(key)
             if act is not None:
                 act.setEnabled(proj_ready)
-        # 图纸级（导出需当前图纸）
+        # 图纸级（导出需当前图纸；busy 时一并禁用，防并发导出）
         has_sheet = has_proj and self._sheet_id is not None
         if hasattr(self, "btn_export"):
-            self.btn_export.setEnabled(has_sheet)
+            self.btn_export.setEnabled(has_sheet and not self._busy)
         # 删除图纸需有选中项（P3：多选≥1 即可）
         has_sel = has_sheet and len(self.sheet_list.selectedItems()) > 0
         if hasattr(self, "btn_del_sheet"):
@@ -1151,6 +1244,9 @@ class MainWindow(QMainWindow):
         self.legend_panel.load_project(self._project_id)
         self.binding_workbench.load_project(self._project_id)
         self.project_properties.load_project(self._project_id)
+        # 项目切换后重算 BOQ / 实体计数（状态栏与 BOQ 页头行共用）
+        self._stat_boq = len(db.get_boq_items(self._project_id)) if self._project_id else 0
+        self._refresh_boq_count()
         self._refresh_status_breadcrumb()
         self._refresh_enabled()
 
@@ -1214,7 +1310,7 @@ class MainWindow(QMainWindow):
         原型：cyan-500 已识别 / amber-400 待复核 / slate-300 未执行 AI。
         """
         if st is None:
-            return ("未开始", T.TEXT_DISABLED, "#CBD5E1")
+            return ("未执行 AI", T.TEXT_DISABLED, "#CBD5E1")
         if st["pending"]:
             return (f"待复核 {st['pending']}", T.WARNING_BAR_TEXT, "#FBBF24")
         if st["accepted"]:
@@ -1434,6 +1530,7 @@ class MainWindow(QMainWindow):
         self._parse_worker.progress.connect(self._on_parse_progress)
         self._parse_worker.done.connect(self._on_parse_done)
         self._parse_worker.failed.connect(self._on_parse_failed)
+        self._set_busy(True)
         self._parse_worker.start()
 
     def _make_parse_dialog(self, title: str) -> "object":
@@ -1457,6 +1554,8 @@ class MainWindow(QMainWindow):
             self._parse_cancel_event.set()
         if getattr(self, "_parse_dialog", None) is not None:
             self._parse_dialog.setLabelText("正在取消…")
+        # 取消解析可能不触发 done/failed（worker 静默退出），这里立即放行入口
+        self._set_busy(False)
 
     # ---------- 批量重新解析 ----------
     _STATUS_LABEL = {"convert": "转换中", "parse": "解析中", "db": "入库",
@@ -1504,6 +1603,7 @@ class MainWindow(QMainWindow):
         dlg.canceled.connect(self._on_batch_reparse_cancel)
         self._batch_reparse_dlg = dlg
         dlg.show()
+        self._set_busy(True)
         self._batch_reparse_worker.start()
 
     def _on_batch_reparse_cancel(self):
@@ -1528,6 +1628,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"批量重解析 {done}/{total} · {filename} {label}")
 
     def _on_batch_reparse_done(self, stats: dict):
+        self._set_busy(False)
         dlg = getattr(self, "_batch_reparse_dlg", None)
         if dlg is not None:
             dlg.reset()
@@ -1555,6 +1656,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "批量重新解析", msg)
 
     def _on_batch_reparse_failed(self, err: str):
+        self._set_busy(False)
         dlg = getattr(self, "_batch_reparse_dlg", None)
         if dlg is not None:
             dlg.close()
@@ -1592,6 +1694,7 @@ class MainWindow(QMainWindow):
         self._parse_worker.progress.connect(self._on_parse_progress)
         self._parse_worker.done.connect(self._on_parse_done)
         self._parse_worker.failed.connect(self._on_parse_failed)
+        self._set_busy(True)
         self._parse_worker.start()
 
     def _on_parse_progress(self, done: int, total: int):
@@ -1631,6 +1734,7 @@ class MainWindow(QMainWindow):
         self._import_dialog.setAutoReset(False)
         self._import_dialog.canceled.connect(self._on_import_cancel)
         self._import_dialog.show()
+        self._set_busy(True)
         self._import_worker.start()
 
     def _on_import_cancel(self):
@@ -1650,6 +1754,7 @@ class MainWindow(QMainWindow):
         dlg.setLabelText(f"[{done}/{total}] {flag} {name}")
 
     def _on_import_done(self, stats: dict):
+        self._set_busy(False)
         dlg = getattr(self, "_import_dialog", None)
         if dlg:
             dlg.close()
@@ -1663,6 +1768,7 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "批量导入", msg)
 
     def _on_import_failed(self, err: str):
+        self._set_busy(False)
         dlg = getattr(self, "_import_dialog", None)
         if dlg:
             dlg.close()
@@ -1673,6 +1779,7 @@ class MainWindow(QMainWindow):
             "· 磁盘空间是否充足", err[:2000])
 
     def _on_parse_done(self, dxf_path: str, drawing):
+        self._set_busy(False)
         dlg = getattr(self, "_parse_dialog", None)
         if dlg is not None:
             dlg.close()
@@ -1720,6 +1827,7 @@ class MainWindow(QMainWindow):
         self._parse_worker = None
 
     def _on_parse_failed(self, msg: str):
+        self._set_busy(False)
         dlg = getattr(self, "_parse_dialog", None)
         if dlg is not None:
             dlg.close()
@@ -1748,50 +1856,98 @@ class MainWindow(QMainWindow):
         # 切换图纸时清空待选
         if self.canvas.get_pending():
             self._clear_pending()
+        # P1-1：切图数据加载后台化。序号防并发错乱：快速连续切换时旧 worker
+        # 结果到达即丢弃；旧图 canvas 构建若在跑，则取消它。
+        self._sheet_load_seq += 1
+        if self._sheet_cancel_event is not None:
+            self._sheet_cancel_event.set()
+            self._sheet_cancel_event = None
+        # 立即给用户反馈（后续真正完成时状态栏替换为「已加载」）
+        self.statusBar().showMessage(f"正在加载 {s.filename}…")
+        # DB 读取（blocks_json / 实体 / 图层统计）全部移出 UI 线程
+        worker = _SheetLoadWorker(s.id, s.blocks_json)
+        worker.data_ready.connect(
+            lambda payload, seq=self._sheet_load_seq, s=s: self._on_sheet_data_ready(seq, payload, s))
+        worker.failed.connect(self._on_sheet_load_failed)
+        worker.start()
+        self._sheet_worker = worker
+
+    def _on_sheet_data_ready(self, seq: int, payload: dict, s):
+        """后台 DB 读取完成 → 主线程分批构建画布 + 刷新图层树/状态。
+
+        canvas.build 仍在此函数执行（QGraphicsItem 需 GUI 线程），但改为
+        分批 + 每批 pump 事件循环：进度条走起来、窗口不再「未响应」。
+        """
+        if seq != self._sheet_load_seq:
+            return  # 用户已切到别的图纸，丢弃过期结果
+        started = time.perf_counter()
+        blocks = payload["blocks"]
+        entities = payload["entities"]
+        layer_colors = payload["layer_colors"]
+        layers = payload["layers"]
+        blocks_info = payload["blocks_info"]
+        self._current_blocks = blocks
+        self._stat_entities = len(entities)
+        self._stat_layers = len(layers)
+        self._sheet_id = s.id
+
+        cancel_evt = threading.Event()
+        self._sheet_cancel_event = cancel_evt
+
+        dlg = QProgressDialog(f"加载图纸：{s.filename}", "取消", 0, 100, self)
+        dlg.setWindowTitle("加载中")
+        dlg.setWindowModality(Qt.WindowModal)
+        dlg.setMinimumDuration(0)
+        dlg.setAutoClose(False)
+        dlg.setAutoReset(False)
+        dlg.canceled.connect(cancel_evt.set)
+        dlg.show()
+
+        def progress(p):
+            if not dlg.wasCanceled():
+                dlg.setValue(int(p * 100))
+
         try:
-            stage_started = time.perf_counter()
-            # 从缓存取块几何，实体从数据库取——切换图纸无需重新解析
-            blocks = json.loads(s.blocks_json) if s.blocks_json else {}
-            self._current_blocks = blocks
-            entities = db.get_entities(s.id)
-            logger.debug("sheet switch stage: sheet_id=%s stage=load_entities elapsed_ms=%.1f entities=%d blocks=%d",
-                         s.id, (time.perf_counter() - stage_started) * 1000,
-                         len(entities), len(blocks))
-            stage_started = time.perf_counter()
-            self.canvas.build(entities, blocks)
-            logger.debug("sheet switch stage: sheet_id=%s stage=canvas_build elapsed_ms=%.1f",
-                         s.id, (time.perf_counter() - stage_started) * 1000)
-            stage_started = time.perf_counter()
-            layer_colors = db.layer_color_map(s.id)
-            layers = db.distinct_layers(s.id)
-            blocks_info = db.distinct_blocks(s.id)
-            self.layer_tree.rebuild(
-                [LayerInfo(name=k, entity_count=v, color=layer_colors.get(k, (128,128,128)))
-                 for k, v in layers],
-                [BlockInfo(name=k, entity_count=v) for k, v in blocks_info],
-                layer_colors=layer_colors)
-            logger.debug("sheet switch stage: sheet_id=%s stage=layer_queries_and_tree elapsed_ms=%.1f layers=%d blocks=%d",
-                         s.id, (time.perf_counter() - stage_started) * 1000,
-                         len(layers), len(blocks_info))
-            note = "" if s.blocks_json else "（无块缓存，块引用将以红叉占位；请重新打开该图纸刷新）"
-            self._stat_entities = len(entities)
-            self._stat_layers = len(layers)
-            self.canvas_toolbar.set_loaded_file(s.filename)
-            self._refresh_status_breadcrumb()
-            self.statusBar().showMessage(f"已加载：{s.filename}（{len(entities)} 实体）{note}")
-            logger.info("sheet switch complete: sheet_id=%s filename=%s entities=%d layers=%d blocks=%d elapsed_ms=%.1f",
-                        s.id, s.filename, len(entities), len(layers), len(blocks_info),
-                        (time.perf_counter() - started) * 1000)
-            # 跨图纸定位：图纸加载完成后自动触发定位
-            pending = self._pending_locate_name
-            if pending:
-                self._pending_locate_name = None
-                self._on_legend_locate(pending)
-            self._refresh_enabled()
+            self.canvas.build(entities, blocks, progress_cb=progress,
+                              cancel_event=cancel_evt)
         except Exception as e:  # noqa: BLE001
-            logger.exception("sheet switch failed: sheet_id=%s filename=%s elapsed_ms=%.1f",
-                             s.id, s.filename, (time.perf_counter() - started) * 1000)
+            dlg.close()
+            self._sheet_cancel_event = None
+            logger.exception("sheet build failed: sheet_id=%s", s.id)
             self.statusBar().showMessage(f"加载失败：{e}")
+            return
+        dlg.close()
+        if cancel_evt.is_set():
+            # 用户取消 / 已切图：不重复状态（下轮数据到达或新切图会重建）
+            self._sheet_cancel_event = None
+            return
+
+        # ----- 构建完成：后续 UI 更新（图层树 / 状态条 / 跨图纸定位） -----
+        self.layer_tree.rebuild(
+            [LayerInfo(name=k, entity_count=v, color=layer_colors.get(k, (128, 128, 128)))
+             for k, v in layers],
+            [BlockInfo(name=k, entity_count=v) for k, v in blocks_info],
+            layer_colors=layer_colors)
+        note = "" if s.blocks_json else "（无块缓存，块引用将以红叉占位；请重新打开该图纸刷新）"
+        self._stat_entities = len(entities)
+        self._stat_layers = len(layers)
+        self.canvas_toolbar.set_loaded_file(s.filename)
+        self._refresh_status_breadcrumb()
+        self.statusBar().showMessage(f"已加载：{s.filename}（{len(entities)} 实体）{note}")
+        logger.info("sheet switch complete: sheet_id=%s filename=%s entities=%d layers=%d blocks=%d elapsed_ms=%.1f",
+                    s.id, s.filename, len(entities), len(layers),
+                    len(blocks_info), (time.perf_counter() - started) * 1000)
+        # 跨图纸定位：图纸加载完成后自动触发定位
+        pending = self._pending_locate_name
+        if pending:
+            self._pending_locate_name = None
+            self._on_legend_locate(pending)
+        self._refresh_enabled()
+
+    def _on_sheet_load_failed(self, sheet_id: int, err: str):
+        """后台 DB 读取失败（如数据库损坏/文件被删）→ 友好提示。"""
+        logger.error("sheet load failed: sheet_id=%s err=%s", sheet_id, err.splitlines()[-1] if err else "")
+        self.statusBar().showMessage(f"图纸数据加载失败：{(err or '').splitlines()[-1]}")
 
     # ---------- BOQ ----------
     def import_boq(self):
@@ -1810,6 +1966,7 @@ class MainWindow(QMainWindow):
         db.update_project_boq(self._project_id, path)
         self.boq_table.load(db.get_boq_items(self._project_id))
         self._stat_boq = len(items)
+        self._refresh_boq_count()
         self._update_stats()
         self.statusBar().showMessage(f"BOQ 已导入：{len(items)} 条")
 
@@ -1824,6 +1981,7 @@ class MainWindow(QMainWindow):
             # 关联/回写后刷新 BOQ 表（实测数量列可能已更新）
             self.boq_table.load(db.get_boq_items(self._project_id))
             self._stat_boq = len(db.get_boq_items(self._project_id))
+            self._refresh_boq_count()
             self._update_stats()
 
     def open_project_settings(self):
@@ -1852,6 +2010,83 @@ class MainWindow(QMainWindow):
             self._error_box(
                 "LLM 设置失败", "无法打开 LLM 设置窗口。\n\n"
                 "请检查配置目录读写权限后重试。", f"{e}")
+
+    # ---------- P1-2 数据库瘦身（VACUUM） ----------
+    VACUUM_WASTE_RATIO = 0.4          # 空闲页 ≥ 40% 即认为高碎片，值得整理
+    VACUUM_MIN_BYTES = 100 * 1024 * 1024  # <100MB 的库不值得动（收益小）
+
+    def _check_db_fragmentation(self):
+        """启动检测：freelist 占比过高（如历史删除遗留下来的空闲页）→ 提示整理。
+
+        纯展示性检查失败（PRAGMA 查询 / DB 不存在）静默跳过，不影响启动。
+        """
+        if os.environ.get("QT_QPA_PLATFORM") == "offscreen":
+            return
+        try:
+            u = db.db_usage()
+            if not u["exists"]:
+                return
+            fbytes = u["freelist_bytes"]
+            if (fbytes >= self.VACUUM_MIN_BYTES
+                    and u["waste_ratio"] >= self.VACUUM_WASTE_RATIO):
+                ret = QMessageBox.question(
+                    self, "数据库瘦身",
+                    f"数据库文件 {u['file_bytes']/1e6:.0f} MB，其中空闲页约占 "
+                    f"{u['waste_ratio']:.0%}（{fbytes/1e6:.1f} MB）可回收。\n\n"
+                    "整理（VACUUM）可显著缩小文件、加快冷启动。是否现在整理？",
+                    QMessageBox.Yes | QMessageBox.No)
+                if ret == QMessageBox.Yes:
+                    self._run_vacuum()
+        except Exception:  # noqa: BLE001
+            logger.debug("db fragmentation check skipped", exc_info=True)
+
+    def open_db_maintenance(self):
+        """工具菜单入口：手动查看/整理数据库空间（不设自动触发条件）。"""
+        try:
+            u = db.db_usage()
+        except Exception as e:  # noqa: BLE001
+            self._error_box("数据库瘦身", "无法读取数据库状态。", f"{e}")
+            return
+        if not u["exists"]:
+            QMessageBox.information(self, "数据库瘦身", "数据库文件暂不存在。")
+            return
+        txt = (f"数据库文件：{u['file_bytes']/1e6:.0f} MB\n"
+               f"空闲页：{u['free_pages']:,} 页（{u['freelist_bytes']/1e6:.1f} MB，"
+               f"占比 {u['waste_ratio']:.0%}）\n\n"
+               "VACUUM 会回收历史删除留下的空闲页，文件体积显著缩小。\n"
+               "大库需数秒～数十秒，期间界面仍可操作。")
+        ret = QMessageBox.question(self, "数据库瘦身 (VACUUM)", txt,
+                                   QMessageBox.Yes | QMessageBox.No)
+        if ret == QMessageBox.Yes:
+            self._run_vacuum()
+
+    def _run_vacuum(self):
+        """后台执行 VACUUM：进度对话框（进度条不确定）展示忙碌，完成后报结果。"""
+        dlg = QProgressDialog("VACUUM 整理中…", "关闭", 0, 0, self)
+        dlg.setWindowTitle("数据库瘦身")
+        dlg.setWindowModality(Qt.WindowModal)
+        dlg.setMinimumDuration(0)
+        dlg.setCancelButton(None)
+        dlg.show()
+        w = _VacuumWorker(self)
+
+        def _done(res):
+            dlg.close()
+            freed_mb = res["freed_bytes"] / 1e6
+            QMessageBox.information(
+                self, "数据库瘦身完成",
+                f"整理完成：{res['before_bytes']/1e6:.0f} MB → "
+                f"{res['after_bytes']/1e6:.0f} MB\n"
+                f"回收 {freed_mb:.1f} MB，用时 {res['duration_ms']/1000:.1f}s")
+
+        def _fail(err):
+            dlg.close()
+            self._error_box("数据库瘦身", "VACUUM 执行失败，请检查磁盘空间/权限。", err)
+
+        w.finished_ok.connect(_done)
+        w.failed.connect(_fail)
+        w.start()
+        self._vacuum_worker = w   # 持有引用，防 GC
 
     def _error_box(self, title: str, hint: str, detail: str = ""):
         """友好错误弹窗入口：堆栈收进「显示详情」，面向用户只给原因+建议。"""
@@ -1889,6 +2124,7 @@ class MainWindow(QMainWindow):
         res = db.reparse_boq(self._project_id)
         self.boq_table.load(db.get_boq_items(self._project_id))
         self._stat_boq = len(db.get_boq_items(self._project_id))
+        self._refresh_boq_count()
         self._update_stats()
         self.legend_panel.load_project(self._project_id)
         self.binding_workbench.load_project(self._project_id)
@@ -2366,6 +2602,7 @@ class MainWindow(QMainWindow):
         self._ai_dialog.setWindowModality(Qt.WindowModal)
         self._ai_dialog.setWindowTitle("AI 自动算量")
         self._ai_dialog.show()
+        self._set_busy(True)
         self._ai_worker.start()
 
     def _run_ai_takeoff_folder(self, folder: str):
@@ -2382,6 +2619,7 @@ class MainWindow(QMainWindow):
         self._ai_dialog.setWindowModality(Qt.WindowModal)
         self._ai_dialog.setWindowTitle("AI 自动算量 - 文件夹")
         self._ai_dialog.show()
+        self._set_busy(True)
         self._ai_worker.start()
 
     def _on_ai_progress(self, phase: str, progress: float, msg: str):
@@ -2392,6 +2630,7 @@ class MainWindow(QMainWindow):
             dlg.setLabelText(f"【{phase}】{msg}")
 
     def _on_ai_single_done(self, result):
+        self._set_busy(False)
         dlg = getattr(self, "_ai_dialog", None)
         if dlg:
             dlg.close()
@@ -2403,6 +2642,7 @@ class MainWindow(QMainWindow):
         d.exec()
 
     def _on_ai_folder_done(self, result):
+        self._set_busy(False)
         dlg = getattr(self, "_ai_dialog", None)
         if dlg:
             dlg.close()
@@ -2437,11 +2677,15 @@ class MainWindow(QMainWindow):
             return
         db.append_boq_items(self._project_id, new_items)
         self.boq_table.load(db.get_boq_items(self._project_id))
+        self._stat_boq = len(db.get_boq_items(self._project_id))
+        self._refresh_boq_count()
+        self._update_stats()
         self.right_tabs.setCurrentWidget(self.boq_page)
         self.statusBar().showMessage(
             f"已保存 {len(new_items)} 条 AI 结果到 BOQ 清单（追加，未覆盖已有条目）")
 
     def _on_ai_failed(self, err: str):
+        self._set_busy(False)
         dlg = getattr(self, "_ai_dialog", None)
         if dlg:
             dlg.close()
@@ -2449,7 +2693,7 @@ class MainWindow(QMainWindow):
         self._error_box("AI 算量失败",
                         "AI 算量未能完成。\n\n"
                         "常见原因：\n"
-                        "· LLM 后端未配置或未启动（检查「⚙ LLM」设置）\n"
+                        "· LLM 后端未配置或未启动（检查「更多 → LLM 设置…」）\n"
                         "· 图纸解析失败或文件损坏\n"
                         "· 网络超时（可在 LLM 设置中调大 timeout）\n\n"
                         "点击「显示详情」可查看完整错误信息。",
@@ -2478,7 +2722,9 @@ class MainWindow(QMainWindow):
         lay.addLayout(row)
         dlg.exec()
 
-    # ---------- 图例标定 ----------
+    # ---------- 项目属性 ----------
+    def focus_project_properties(self):
+        self.right_tabs.setCurrentWidget(self.project_properties)
 
     # ---------- 图例标定 ----------
     def focus_legend(self):

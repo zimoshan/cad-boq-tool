@@ -124,7 +124,7 @@ class _CandidateCard(QFrame):
         title = QLabel(str(name))
         title.setStyleSheet(
             f"color:{T.TEXT_PRIMARY}; font-size:12px;"
-            f"font-weight:{T.FONT_WEIGHT_BOLD};")
+            f"font-weight:700;")
         title_row.addWidget(title, 1)
         if status == "PENDING":
             conf = QLabel(f"置信度 {candidate.confidence:.0%}")
@@ -166,6 +166,16 @@ class _CandidateCard(QFrame):
         lbl_info.setStyleSheet(
             f"color:{T.TEXT_SECONDARY}; font-size:{T.FONT_SIZE_CAPTION}px;")
         col.addWidget(lbl_info)
+
+        # 依据（reason）：LLM/规则生成的辅助确认文字（含「需复核」标记）。
+        # v3 卡片化时曾被遗漏，此处恢复为独立行，等宽换行显示完整说明。
+        if getattr(candidate, "reason", ""):
+            prefix = "依据" if status == "PENDING" else "原因"
+            lbl_reason = QLabel(f"{prefix}：{candidate.reason}")
+            lbl_reason.setWordWrap(True)
+            lbl_reason.setStyleSheet(
+                f"color:{T.TEXT_SECONDARY}; font-size:{T.FONT_SIZE_CAPTION}px;")
+            col.addWidget(lbl_reason)
 
         # 底部行：建议绑定 + 行内操作（ACCEPTED 用 emerald 提示替代绑定行）
         bottom = QHBoxLayout()
@@ -258,6 +268,7 @@ class BindingWorkbench(QWidget):
     statusMessage = Signal(str)
     bindingChanged = Signal()               # 确认/拒绝后主窗口刷新计量口径
     assignRequested = Signal()              # 底部深色按钮 → 主窗口分配已选实体
+    busyChanged = Signal(bool)             # 内部 worker 启停 → 主窗口统一 busy 收口（P0 C1）
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -397,9 +408,15 @@ class BindingWorkbench(QWidget):
             self.statusMessage.emit("请先新建/选择项目")
             return
         if not db.get_engineering_objects(self._project_id):
-            self.statusMessage.emit("请先提取工程对象（AI 算量或更多菜单）")
+            self.statusMessage.emit("请先提取工程对象 —— 顶栏「AI 算量 ▾ → 提取工程对象」")
+            return
+        if not db.get_boq_items(self._project_id):
+            self.statusMessage.emit(
+                "请先导入 BOQ 清单 —— 顶栏「更多 ▾ → 导入 BOQ」（绑定候选是「工程对象 ↔ BOQ 条目」的匹配建议，无清单无法生成）")
+            self.statusMessage.emit("→ 导入 BOQ 后重新执行「生成绑定候选」，已提取的工程对象不会丢失")
             return
         self.statusMessage.emit("生成候选中…（历史→规则→语义→LLM 精排，规则强命中不耗 LLM）")
+        self.busyChanged.emit(True)
         self._worker = _BindingWorker(self._project_id, True, parent=self)
         self._worker.finished_ok.connect(self._on_generate_done)
         self._worker.failed.connect(self._on_generate_failed)
@@ -411,9 +428,10 @@ class BindingWorkbench(QWidget):
             self.statusMessage.emit("请先新建/选择项目")
             return
         if not db.get_engineering_objects(self._project_id):
-            self.statusMessage.emit("请先提取工程对象")
+            self.statusMessage.emit("请先提取工程对象 —— 顶栏「AI 算量 ▾ → 提取工程对象」")
             return
         self.statusMessage.emit("LLM 补充分类中…（可稍后查看结果）")
+        self.busyChanged.emit(True)
         self._class_worker = _ClassifyWorker(self._project_id, parent=self)
         self._class_worker.finished_ok.connect(self._on_llm_classify_done)
         self._class_worker.failed.connect(self._on_llm_classify_failed)
@@ -474,8 +492,17 @@ class BindingWorkbench(QWidget):
                     if filter_eoid is None
                     or (isinstance(filter_eoid, set) and c.engineering_object_id in filter_eoid)
                     or (not isinstance(filter_eoid, set) and c.engineering_object_id == filter_eoid)]
-            # T7 主动学习难例挖掘：低置信优先（升序），便于优先复核难例
-            rows.sort(key=lambda c: (c.confidence, c.id))
+            # 排序（2026-08-28 绑定增强 2.2）：
+            #   · 跨 EO 保留 T7 主动学习难例优先——按"该 EO 最低置信"升序
+            #     （先审得分最低的图块，不回退难例挖掘机制）；
+            #   · EO 内部候选改为置信度降序——最佳绑定置顶（需求 1 一眼可见）。
+            eo_min_conf = {}
+            for c in rows:
+                cur = eo_min_conf.get(c.engineering_object_id)
+                if cur is None or c.confidence < cur:
+                    eo_min_conf[c.engineering_object_id] = c.confidence
+            rows.sort(key=lambda c: (eo_min_conf[c.engineering_object_id],
+                                     -c.confidence, c.id))
         else:
             rows = db.get_candidates(self._project_id, status=self._queue_status)
             if filter_eoid is not None:
@@ -488,10 +515,22 @@ class BindingWorkbench(QWidget):
         total = len(rows)
         rows = rows[:CARD_RENDER_CAP]
         if not rows:
-            self._add_cards_placeholder(
-                {"PENDING": "暂无待复核候选 — 顶栏「AI 算量」识别后在此复核",
-                 "ACCEPTED": "暂无已确认绑定",
-                 "REJECTED": "暂无已忽略候选"}[self._queue_status])
+            if self._queue_status == "PENDING":
+                has_obj = bool(self._objects)
+                if has_obj and not db.get_boq_items(self._project_id):
+                    # 无 BOQ：候选无从生成（先导线索，避免用户以为生成失败）
+                    hint = ("已提取 {n} 个工程对象，但项目尚无 BOQ 清单\n"
+                            "请先导入 —— 顶栏「更多 ▾ → 导入 BOQ」，再「AI 算量 ▾ → 生成绑定候选」"
+                            ).format(n=len(self._objects))
+                elif has_obj:
+                    hint = "已提取工程对象，请生成候选 —— 顶栏「AI 算量 ▾ 生成绑定候选」"
+                else:
+                    hint = "尚无工程对象 —— 顶栏「AI 算量 ▾ 提取工程对象」开始"
+                self._add_cards_placeholder(hint)
+            else:
+                self._add_cards_placeholder(
+                    {"ACCEPTED": "暂无已确认绑定",
+                     "REJECTED": "暂无已忽略候选"}[self._queue_status])
         for c in rows:
             eo = eo_map.get(c.engineering_object_id) or db.get_engineering_object(
                 c.engineering_object_id)
@@ -540,6 +579,7 @@ class BindingWorkbench(QWidget):
 
     # ---------- 后台完成回调 ----------
     def _on_generate_done(self, res):
+        self.busyChanged.emit(False)
         self.load_project(self._project_id)
         self.bindingChanged.emit()   # 新 PENDING 候选 → 图纸列表徽标/计量口径联动
         st = res["stats"]
@@ -551,9 +591,11 @@ class BindingWorkbench(QWidget):
             f"已绑定跳过 {st['skipped_bound']} / 未匹配 {st['no_match']}{llm_note}")
 
     def _on_generate_failed(self, err: str):
+        self.busyChanged.emit(False)
         self.statusMessage.emit(f"候选生成失败：{err[:120]}")
 
     def _on_llm_classify_done(self, res):
+        self.busyChanged.emit(False)
         self.load_project(self._project_id)
         self.statusMessage.emit(
             f"LLM 补充分类完成：成功 {res.get('classified', 0)} / 失败 "
@@ -561,6 +603,7 @@ class BindingWorkbench(QWidget):
             f"{'（另外 ' + str(res.get('deferred', 0)) + ' 个低置信对象待下次）' if res.get('deferred') else ''}")
 
     def _on_llm_classify_failed(self, err: str):
+        self.busyChanged.emit(False)
         self.statusMessage.emit(f"LLM 补充分类失败：{err[:120]}")
 
     # ---------- 行操作 ----------

@@ -21,10 +21,14 @@ BINDING_SYSTEM_PROMPT = """你是机电工程 BOQ 绑定专家。任务：判断
 # 判定规则（按优先级依次应用）
 1. 先按功能类别对齐：设备块↔设备安装项；电缆/电线/桥架等敷设类↔管线敷设项。
    类别不同的候选（插座 vs 灯具）即使文字相似也排除。
-2. 名称语义对照（中英混排、同义词均算一致）：LIGHTING↔照明灯具、SOCKET/POWER POINT↔插座、UPS↔不间断电源。
-3. 用 specification / nearby_text 中的容量·功率·电压等级做一致性确认：一致则提高 confidence；
+2. **块名↔描述整串近似 → 强匹配（最高置信）**：block_name 与某候选 description（去掉
+   编号/单位/空白/横线/下划线后比较）几乎完全一致——相同、一方完整包含另一方，或
+   仅词序/缩写差异——即判定为强匹配：confidence≥0.9 且 needs_review=false。
+   例：block_name="DOME CAMERA 2MP" ↔ "Dome Camera 2Mp" → 强匹配。
+3. 名称语义对照（中英混排、同义词均算一致）：LIGHTING↔照明灯具、SOCKET/POWER POINT↔插座、UPS↔不间断电源。
+4. 用 specification / nearby_text 中的容量·功率·电压等级做一致性确认：一致则提高 confidence；
    冲突则降低 confidence 或置 needs_review=true。
-4. 编号、序号、数量的差异忽略不计，不作为否决依据。
+5. 编号、序号、数量的差异忽略不计，不作为否决依据。
 
 # 输出要求
 1. 只输出一行严格 JSON，无 ```json 标记、无任何解释文字
@@ -34,9 +38,13 @@ BINDING_SYSTEM_PROMPT = """你是机电工程 BOQ 绑定专家。任务：判断
 4. 候选与对象全都不匹配 → no_match=true 且 selected_boq_id=null，绝不强行选一个
 
 # 示例
-候选：EL-L01 | 吸顶灯 LED 18W | 套；PS-D02 | 单相插座 16A | 个
+候选：EL-L01 | 吸顶灯 LED 18W | 套；PS-L01 | 插座 16A | 个
 对象：block_name="CEILING LIGHT 18W" layer_name="E-LIGHTING"
 输出：{"selected_boq_id":"EL-L01","confidence":0.92,"reason":"ceiling light 即吸顶灯，容量18W一致","alternative_boq_ids":[],"needs_review":false,"no_match":false}
+
+候选：CY-08 | DOME CAMERA 2MP | 套；PS-L01 | 插座 16A | 个
+对象：block_name="DOME CAMERA 2MP" layer_name="L-CCTV"
+输出：{"selected_boq_id":"CY-08","confidence":0.95,"reason":"块名与描述几乎一致，强匹配","alternative_boq_ids":[],"needs_review":false,"no_match":false}
 """
 
 BINDING_USER_TEMPLATE = """# CAD 对象

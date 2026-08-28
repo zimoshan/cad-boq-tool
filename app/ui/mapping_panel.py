@@ -12,7 +12,6 @@ MODE_LABELS = {"entity": "点选", "layer": "图层", "block": "块"}
 class MappingPanel(QWidget):
     deleteMappingRequested = Signal(int)
     recalcRequested = Signal()
-    exportRequested = Signal()
     recolorRequested = Signal()
 
     def __init__(self, parent=None):
@@ -53,16 +52,12 @@ class MappingPanel(QWidget):
         self.result_label = QLabel("尚未计量")
         self.result_label.setWordWrap(True)
         v2.addWidget(self.result_label)
-        self.btn_export = QPushButton("导出算量清单 (Excel)")
-        self.btn_export.clicked.connect(self.exportRequested.emit)
-        v2.addWidget(self.btn_export)
         root.addWidget(res_box, stretch=2)
 
     def refresh_enabled(self, has_project: bool):
         """P1-12：按钮与上下文对齐 — 无项目/无映射时禁用操作按钮。"""
         self.btn_delete.setEnabled(has_project and bool(self._mappings))
         self.btn_recalc.setEnabled(has_project)
-        self.btn_export.setEnabled(has_project)
 
     def set_current(self, item_desc: str):
         self.current_label.setText(f"当前条目：{item_desc}")

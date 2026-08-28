@@ -2,7 +2,7 @@
 
 - 每个块一行：块名 / 类别 / 设备类型 / 规格 / 单位 / 规则 / 状态 / 来源
 - 类别·单位·规则 用下拉选择；设备类型·规格 内联编辑，改完自动落库
-- 工具栏：图纸筛选 / 保存 / 确认全部 / 仅看未标定 / 隐藏建筑块 / 底图减法 / 导入 / 导出 / 刷新
+- 工具栏：图纸筛选 / 保存 / 全部标定 / 仅看未标定 / 隐藏建筑块 / 底图减法 / 导入 / 导出 / 刷新
 - 行右键「在图纸中定位」→ locateRequested(block_name)
 - legendChanged()：任一条目变更后发出，供主窗口刷新算量口径
 
@@ -19,7 +19,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
                                QTableWidgetItem, QHeaderView, QPushButton,
                                QAbstractItemView, QLabel, QMenu, QFileDialog,
-                               QStyledItemDelegate, QComboBox)
+                               QStyledItemDelegate, QComboBox, QLineEdit)
 from .. import db
 from ..takeoff import block_legend as bl
 from . import theme as T
@@ -77,6 +77,9 @@ class LegendPanel(QWidget):
         self._base_layers: set = set()  # 底图图层集（set[str]）
         self._base_subtraction = True   # 底图减法默认开（有底图时生效）
         self._base_hidden_blocks: set = set()   # 底图减法判定为建筑块的块名集
+        self._block_layers: dict = {}   # {block_name: set[str]} — 块出现过的 INSERT 图层
+        self._layer_filter: str = ""    # 所选图层（空 = 全部图层）
+        self._search_filter: str = ""   # 关键字过滤（块名/类别/设备类型/规格 子串）
         self._build_ui()
 
     def refresh_enabled(self, has_project: bool):
@@ -91,14 +94,31 @@ class LegendPanel(QWidget):
         root.setContentsMargins(6, 6, 6, 6)
         root.setSpacing(4)
 
-        # 工具栏
-        bar = QHBoxLayout()
-        # 图纸过滤：全部图纸 / 单张图纸（跟随左侧图纸列表联动，也可手动切回）
+        # 工具栏（两行）：第 1 行 = 筛选（图纸/图层/关键字）；第 2 行 = 动作按钮
+        # 筛选行：图纸（已有）→ 图层（新增）→ 关键字（新增），均支持手动条件组合
+        filter_row = QHBoxLayout()
         self.cmb_sheet = QComboBox()
-        self.cmb_sheet.setMinimumWidth(420)   # 任务5：拉长筛选框，文件名基本完整显示
-        self.cmb_sheet.setToolTip("按图纸过滤：显示该图纸实际出现的设备块；「全部图纸」为项目聚合视图")
+        self.cmb_sheet.setMinimumWidth(280)
+        self.cmb_sheet.setToolTip("按图纸过滤：全部图纸 / 单张图纸")
         self.cmb_sheet.currentIndexChanged.connect(self._on_sheet_combo_changed)
-        self.btn_confirm_all = QPushButton("确认全部")
+        self.cmb_layer = QComboBox()
+        self.cmb_layer.setMinimumWidth(180)
+        self.cmb_layer.setToolTip("按 INSERT 图层过滤：只显示出现在该图层上的块")
+        self.cmb_layer.currentIndexChanged.connect(self._on_layer_combo_changed)
+        self.edt_search = QLineEdit()
+        self.edt_search.setPlaceholderText("关键字：块名 / 类别 / 设备类型 / 规格")
+        self.edt_search.setClearButtonEnabled(True)
+        self.edt_search.setMaximumWidth(240)
+        self.edt_search.textChanged.connect(self._on_search_changed)
+        filter_row.addWidget(self.cmb_sheet)
+        filter_row.addWidget(self.cmb_layer)
+        filter_row.addWidget(self.edt_search)
+        filter_row.addStretch(1)
+        root.addLayout(filter_row)
+
+        # 动作行：全部标定 / 保存 / 刷新 / 导入 / 导出 / 仅看未标定 / 隐藏建筑块 / 底图减法
+        bar = QHBoxLayout()
+        self.btn_confirm_all = QPushButton("全部标定")
         self.btn_confirm_all.clicked.connect(self._on_confirm_all)
         self.btn_save = QPushButton("保存")
         self.btn_save.clicked.connect(self._on_save)
@@ -122,11 +142,10 @@ class LegendPanel(QWidget):
         self.chk_base_sub.setCheckable(True)
         self.chk_base_sub.setChecked(self._base_subtraction)
         self.chk_base_sub.setToolTip(
-            "有建筑底图时自动隐藏与底图同名图层上的块（确定性过滤，零 LLM 成本）。\n"
+            "有建筑底图时自动隐藏与指定底图同名图层上的块（确定性过滤，零 LLM 成本）。\n"
             "切换底图后自动生效；无底图时无效。")
         self.chk_base_sub.toggled.connect(self._on_base_sub_toggle)
         self.chk_base_sub.setVisible(False)   # 无底图时不显示
-        bar.addWidget(self.cmb_sheet)
         for b in (self.btn_confirm_all, self.btn_save,
                   self.btn_refresh, self.btn_import, self.btn_export,
                   self.chk_unconfirmed, self.chk_hide_building, self.chk_base_sub):
@@ -236,6 +255,8 @@ class LegendPanel(QWidget):
                 if not any(r["block_name"] == bname for r in self._rows):
                     r = dict(row); r["_count"] = 0
                     self._rows.append(r)
+        self._compute_block_layers()
+        self._reload_layer_combo()
         self._compute_base_hidden_blocks()
         self._render()
         self._update_status()
@@ -248,6 +269,51 @@ class LegendPanel(QWidget):
             self._compute_base_hidden_blocks()
             self._render()
             self._update_status()
+
+    def _compute_block_layers(self):
+        """聚合当前范围内（单图纸或全项目）每块出现的 INSERT 图层。
+
+        用于图例筛选项：{block_name: set(layer_name)}。
+        """
+        agg: dict[str, set] = {}
+        if self._project_id is None:
+            self._block_layers = agg
+            return
+        if self._sheet_id is not None:
+            layers_map = db.get_block_insert_layers(self._sheet_id)
+            for bn, layers in layers_map.items():
+                agg[bn] = set(layers)
+        else:
+            for s in db.get_sheets(self._project_id):
+                for bn, layers in db.get_block_insert_layers(s.id).items():
+                    agg.setdefault(bn, set()).update(layers)
+        self._block_layers = agg
+
+    def _reload_layer_combo(self):
+        """重建图层下拉（首项「全部图层」），保持当前选中值。"""
+        cur = self.cmb_layer.currentData()
+        self.cmb_layer.blockSignals(True)
+        self.cmb_layer.clear()
+        self.cmb_layer.addItem("全部图层", "")
+        layers = sorted({lw for ls in self._block_layers.values() for lw in ls},
+                        key=str.lower)
+        for lw in layers:
+            self.cmb_layer.addItem(lw, lw)
+        # 恢复选中（所选图层已不存在则回退全部图层）
+        idx = self.cmb_layer.findData(cur)
+        self.cmb_layer.setCurrentIndex(idx if idx >= 0 else 0)
+        self.cmb_layer.blockSignals(False)
+        self._layer_filter = self.cmb_layer.currentData() or ""
+
+    def _on_layer_combo_changed(self, _idx):
+        self._layer_filter = self.cmb_layer.currentData() or ""
+        self._render()
+        self._update_status()
+
+    def _on_search_changed(self, text: str):
+        self._search_filter = (text or "").strip()
+        self._render()
+        self._update_status()
 
     def _compute_base_hidden_blocks(self):
         """计算底图减法判定为建筑块的块名集合。
@@ -329,6 +395,14 @@ class LegendPanel(QWidget):
             rows = [r for r in rows if (r.get("category") or "").strip() != "建筑"]
         if self._only_unconfirmed:
             rows = [r for r in rows if not r.get("confirmed")]
+        if self._layer_filter:
+            rows = [r for r in rows
+                    if self._layer_filter in self._block_layers.get(r["block_name"], set())]
+        if self._search_filter:
+            kw = self._search_filter.lower()
+            rows = [r for r in rows if any(
+                kw in str(r.get(k) or "").lower()
+                for k in ("block_name", "category", "device_type", "spec"))]
         return rows
 
     def _on_hide_building_toggle(self, checked: bool):

@@ -15,13 +15,13 @@ from . import theme as T
 MODE_LABELS = {"pick": "拾取", "layer": "图层", "block": "块"}
 ENTITY_TYPES = ["LINE", "LWPOLYLINE", "ARC", "CIRCLE", "SPLINE", "HATCH", "INSERT", "TEXT"]
 
-# 上下文模式 → 右侧标签页（与主窗口 _mode_tab_map 互逆）
+# 上下文模式（工具条独立切换，解耦右栏面板；仅状态栏面包屑引用）
 CONTEXT_MODES = [
-    ("browse", "清单"),    # 0 绑定工作台 / 清单语义
-    ("mapping", "计量"),   # 1 计量
-    ("legend", "图例"),    # 2 图例标定
-    ("ai", "AI"),          # 3 绑定工作台
-    ("props", "属性"),     # 4 项目属性
+    ("browse", "清单"),    # 清单语义
+    ("mapping", "计量"),
+    ("legend", "图例"),
+    ("ai", "AI"),
+    ("props", "属性"),
 ]
 
 
@@ -150,20 +150,6 @@ class CanvasToolbar(QToolBar):
         for k, btn in self.context_buttons.items():
             btn.setChecked(k == mode)
         self.contextModeChanged.emit(mode)
-
-    # tab 索引 → 工作区模式（与主窗口 _mode_tab_map 互逆；rail 点击时镜像高亮）
-    # 绑定0/清单1/计量2/图例3 有镜像；实体属性4/记录6 无；项目属性5 → props
-    TAB_TO_CONTEXT = {0: "ai", 1: "browse", 2: "mapping", 3: "legend",
-                      4: None, 5: "props", 6: None}
-
-    def sync_context_from_tab(self, tab_idx: int):
-        """右栏 tab 被 rail/快捷键切换时，同步工作区按钮选中态（不回发信号）。"""
-        mode = self.TAB_TO_CONTEXT.get(tab_idx)
-        if mode is None:
-            return
-        self._context_mode = mode
-        for k, btn in self.context_buttons.items():
-            btn.setChecked(k == mode)
 
     # ---- 外部 API ----
     def set_mode(self, mode: str):

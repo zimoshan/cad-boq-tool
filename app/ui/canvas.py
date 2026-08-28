@@ -11,7 +11,7 @@ from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QBrush, QPixmap
 from PySide6.QtWidgets import (QGraphicsItem, QGraphicsPathItem, QGraphicsLineItem,
                                QGraphicsEllipseItem, QGraphicsSimpleTextItem,
                                QGraphicsScene, QGraphicsView, QGraphicsItemGroup,
-                               QGraphicsRectItem)
+                               QGraphicsRectItem, QApplication)
 
 from . import theme as T
 
@@ -28,6 +28,11 @@ DATA_TYPE = 4
 
 # LOD 概览模式阈值：场景单位/设备像素 > 该值 → 简化绘制（关抗锯齿）
 _LOD_OVERVIEW_PPU = 6.0
+
+# 大图 LOD（P1-3）：INSERT 块定义子项 ≥ 该值且整体实体数超阈值时，把块渲染
+# 合并为单个 QGraphicsPathItem，避免 QGraphicsItemGroup 在 80k+ 大图上膨胀成
+# 百万级 item（构建/重绘双吃满主线程）。块内子几何不再独立 hover（概览可接受）。
+_BLOCK_LOD_MIN_SUBS = 3
 
 # 主题色 — 全部引用 theme.py 常量，不再硬编码
 THEME_LIGHT = {
@@ -174,6 +179,65 @@ def build_geom_item(geom: dict, entity_id: int, color: tuple, tf=None):
         return None
 
     return None
+
+
+def _item_to_path(item):
+    """提取单子项几何为 QPainterPath（LOD 合并用）。
+
+    文本/未知类型返回 None：概览画布下不参与合并。
+    """
+    if isinstance(item, QGraphicsLineItem):
+        p = QPainterPath()
+        line = item.line()
+        p.moveTo(line.p1()); p.lineTo(line.p2())
+        return p
+    if isinstance(item, QGraphicsPathItem):
+        return QPainterPath(item.path())
+    if isinstance(item, QGraphicsEllipseItem):
+        p = QPainterPath()
+        p.addEllipse(item.rect())
+        return p
+    return None
+
+
+def make_block_lod_item(geom, entity_id, color, block_geoms) -> QGraphicsPathItem:
+    """大图 LOD（P1-3，2026-08-28）：INSERT 渲染——把块定义子几何合并为单个 QGraphicsPathItem。
+
+    QGraphicsItemGroup 方案每个子几何建一个 item，80k+ 实体大图会膨胀到
+    百万级 item（构建与重绘都吃满主线程）。此路径只建 1 个 item：
+    拾取（ENTITY_ID）、图层、颜色语义与分组版一致；代价是块内子几何不再
+    独立 hover（概览画布可接受）。子几何全部无法展开时退化为叉号标记。
+    """
+    qcolor = QColor(*color)
+    bname = geom.get("block", "")
+    insert = geom.get("insert", [0, 0])
+    scale = geom.get("scale", [1.0, 1.0])
+    rot = geom.get("rotation", 0.0)
+
+    def bt(p):
+        rad = math.radians(rot)
+        c, s = math.cos(rad), math.sin(rad)
+        x = p[0] * scale[0] * c - p[1] * scale[1] * s + insert[0]
+        y = p[0] * scale[0] * s + p[1] * scale[1] * c + insert[1]
+        return (x, -y)
+
+    merged = QPainterPath()
+    for sub in block_geoms.get(bname, []):
+        sub_item = build_geom_item(sub, entity_id, color, tf=bt)
+        if sub_item is None:
+            continue
+        sp = _item_to_path(sub_item)
+        if sp is not None and not sp.isEmpty():
+            merged.addPath(sp)
+    if merged.isEmpty():
+        # 块定义缺失或全为文本 → 画叉标记（与 make_block_group 行为一致）
+        ip = QPointF(insert[0], -insert[1])
+        merged.moveTo(ip.x() - 2, ip.y() - 2); merged.lineTo(ip.x() + 2, ip.y() + 2)
+        merged.moveTo(ip.x() - 2, ip.y() + 2); merged.lineTo(ip.x() + 2, ip.y() - 2)
+    item = QGraphicsPathItem(merged)
+    item.setPen(QPen(qcolor, 0))
+    item.setData(DATA_ENTITY_ID, entity_id)
+    return item
 
 
 def make_block_group(geom, entity_id, color, block_geoms: dict, tf) -> QGraphicsItemGroup:
@@ -345,9 +409,18 @@ class CanvasView(QGraphicsView):
     # 大图跳过的类型：标注/填充在 CAD 中主要辅助阅读，不影响算量
     _DEFERRED_TYPES = {"TEXT", "MTEXT", "HATCH", "DIMENSION", "LEADER", "MLEADER"}
 
-    def build(self, entities: list, block_geoms: dict):
+    def build(self, entities: list, block_geoms: dict,
+              progress_cb=None, cancel_event=None):
+        """构建场景图形项。
+
+        P1-1（2026-08-28）：新增可选 ``progress_cb`` / ``cancel_event``——大图
+        (8s~186s 实测波动) 时把实体循环按批处理，每批之间 pump Qt 事件循环，
+        进度条得以刷新、窗口不显示「未响应」。``cancel_event`` 置位则中止构建
+        （已构建部分保留）。QGraphicsItem 必须 GUI 线程创建，真正的后台线程
+        只承担 DB 读取（见 main_window._SheetLoadWorker）。
+        """
         started = time.perf_counter()
-        # 冻结场景更新 + 关闭索引，避免逐项触发布局/重绘
+        # 冻结场景更新 + 关闭索引，逐项触发布局/重绘开销大户
         self._scene.blockSignals(True)
         self._scene.setItemIndexMethod(QGraphicsScene.NoIndex)
         self.setUpdatesEnabled(False)
@@ -368,8 +441,17 @@ class CanvasView(QGraphicsView):
             self._deferred_types_active = True
         else:
             self._deferred_types_active = False
-        for e in entities:
-            self._add_entity(e, skip_deferred=skip_deferred)
+        BATCH = 2000  # 每批构建实体数：够大（分摊事件循环开销）又够小（响应及时）
+        total = len(entities)
+        for start in range(0, total, BATCH):
+            for e in entities[start:start + BATCH]:
+                self._add_entity(e, skip_deferred=skip_deferred)
+            if progress_cb is not None:
+                progress_cb((start + BATCH) / total if total else 1.0)
+            if cancel_event is not None and cancel_event.is_set():
+                break
+            # pump 事件循环：进度条刷新 / 缩放交互不被拖死
+            QApplication.processEvents()
         build_elapsed = time.perf_counter() - started
         # 解冻：恢复索引 + 一次性刷新
         self._scene.setItemIndexMethod(QGraphicsScene.BspTreeIndex)
@@ -418,7 +500,12 @@ class CanvasView(QGraphicsView):
             self._deferred_skipped.append(e)
             return
         if geom.get("type") == "insert":
-            item = make_block_group(geom, e.id, e.color, self._block_geoms, None)
+            # 大图 LOD（P1-3）：块定义子项 ≥ 阈值且整体大图 → 合并单 path，降 item 数
+            if (skip_deferred and geom.get("block", "")
+                    and len(self._block_geoms.get(geom.get("block", ""), [])) >= _BLOCK_LOD_MIN_SUBS):
+                item = make_block_lod_item(geom, e.id, e.color, self._block_geoms)
+            else:
+                item = make_block_group(geom, e.id, e.color, self._block_geoms, None)
         else:
             item = build_geom_item(geom, e.id, e.color)
         if item is None:
@@ -780,9 +867,11 @@ class CanvasView(QGraphicsView):
         self.viewport().update()
         logger.debug("canvas LOD: overview=%s (scene_unit/px=%.2f)", overview, spo)
 
-    # 大图跳过类型的阈值：超过该实体数即按需延迟 TEXT/HATCH/标注（非算量类型）。
+    # 大图延迟非算量类型的阈值：超过该实体数即按需延迟 TEXT/HATCH/标注。
     # BspTreeIndex 本身裁剪视口外绘制，此为构建层裁剪——压低阈值让中等大图也受益。
     _DEFERRED_THRESHOLD = 15_000
+
+    # INSERT 块定义子项 ≥ 该值且整体大图 → 合并为单 path item（常量定义见模块顶部）
 
     def _after_transform(self):
         """缩放/平移/重建后统一刷 LOD 状态"""

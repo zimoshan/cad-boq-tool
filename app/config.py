@@ -47,7 +47,7 @@ LLM_TEMPERATURE = 0.1
 LLM_TIMEOUT = 120
 LLM_MAX_TOKENS = 4000
 # 提示词版本号：改 prompts.py 的绑定 Prompt 时递增（写入 llm_run 审计）
-BINDING_PROMPT_VERSION = "binding-v3"   # v3: 判定规则/字段含义/示例明确化（2026-08-27）
+BINDING_PROMPT_VERSION = "binding-v4"   # v4: 块名↔描述整串近似→强匹配（2026-08-28 绑定增强）
 CLASSIFY_PROMPT_VERSION = "classify-v1"
 # 绑定候选召回参数
 BINDING_TOP_N = 5                    # 规则/LLM 候选上限

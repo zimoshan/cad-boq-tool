@@ -63,7 +63,7 @@ def boq_searchable(item) -> str:
 
 
 def contains_spec(full: str, spec: str) -> bool:
-    """规格级命中：在 full（可含 @@ 紧凑段）中查 spec（可带/不带空格 / 连接符差异）。
+    """规格级命中：在 full（可含 @@ 紧凑段）中查 spec（中是否带/不带空格 / 连接符差异）。
 
     按『两个口径』测：原始子串 + 紧凑子串。任一命中即 True。
     """
@@ -76,3 +76,59 @@ def contains_spec(full: str, spec: str) -> bool:
         return True
     comp = compact(s)
     return bool(comp) and comp in compact(full)
+
+
+def _lcs_len(a: str, b: str) -> int:
+    """最长公共子序列长度（DP，O(len(a)*len(b)））。
+
+    用于整串相似度兜底：分隔符差异已被 compact 归一，剩余差异多为
+    词序/删词/增词，LCS 比例对这类差异比编辑距离更稳健。
+    """
+    la, lb = len(a), len(b)
+    if la == 0 or lb == 0:
+        return 0
+    if la == lb and a == b:
+        return la
+    prev = [0] * (lb + 1)
+    for i in range(1, la + 1):
+        cur = [0] * (lb + 1)
+        ai = a[i - 1]
+        for j in range(1, lb + 1):
+            if ai == b[j - 1]:
+                cur[j] = prev[j - 1] + 1
+            else:
+                cur[j] = prev[j] if prev[j] >= cur[j - 1] else cur[j - 1]
+        prev = cur
+    return prev[lb]
+
+
+def string_similarity(a: str, b: str) -> float:
+    """整串归一化相似度 0~1（2026-08-28 绑定候选增强 P0）。
+
+    输入 block_name / BOQ description（原始带分隔符写法），比较前先
+    ``compact`` 去分隔符/大小写，然后按三档打分：
+
+    1. 完全一致 → 1.0（``CAM_DOME_4MP`` vs ``CAM DOME 4MP`` 同串）；
+    2. 一方整串包含另一方 → ``0.7 + 0.3 * 短/长长度比``（含串越长贴近 1；
+       长整串互相构成时 ≥0.85，纯短 token 如单个规格字不会误触）；
+    3. 其余 → 最长公共子序列比例 ``LCS / max(len)``。
+
+    ≥0.85 视为「块名≈清单描述」强匹配（rule_matcher 用它给强分）。
+    """
+    if not a or not b:
+        return 0.0
+    A, B = compact(a), compact(b)
+    if not A or not B:
+        return 0.0
+    if A == B:
+        return 1.0
+    la, lb = len(A), len(B)
+    # 子串包含
+    short, long = (A, B) if la <= lb else (B, A)
+    if short in long:
+        ratio = len(short) / len(long)
+        return round(0.7 + 0.3 * ratio, 3)
+    # LCS 比例兜底
+    lcs = _lcs_len(A, B)
+    denom = max(la, lb)
+    return round(lcs / denom, 3) if denom else 0.0
