@@ -1473,6 +1473,28 @@ def count_candidates(project_id: int, status: str = None) -> int:
         return conn.execute(sql, args).fetchone()[0]
 
 
+def sheet_candidate_stats(project_id: int) -> dict:
+    """图纸级 AI 进度统计（图纸列表状态徽标用）。
+
+    Returns:
+        {sheet_id: {"objects": n, "pending": n, "accepted": n}}
+        无工程对象的图纸不出现在结果里。
+    """
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT eo.sheet_id AS sid,"
+            "       count(DISTINCT eo.id) AS objects,"
+            "       sum(CASE WHEN c.status='PENDING' THEN 1 ELSE 0 END)  AS pending,"
+            "       sum(CASE WHEN c.status='ACCEPTED' THEN 1 ELSE 0 END) AS accepted "
+            "FROM engineering_object eo "
+            "LEFT JOIN binding_candidate c ON c.engineering_object_id = eo.id "
+            "WHERE eo.project_id=? GROUP BY eo.sheet_id",
+            (project_id,)).fetchall()
+    return {r["sid"]: {"objects": r["objects"] or 0,
+                       "pending": r["pending"] or 0,
+                       "accepted": r["accepted"] or 0} for r in rows}
+
+
 def update_candidate_status(cid: int, status: str) -> None:
     """status ∈ PENDING / ACCEPTED / REJECTED / SUPERSEDED"""
     with get_conn() as conn:

@@ -8,12 +8,12 @@ import tempfile
 import time
 
 from PySide6.QtCore import Qt, QThread, Signal, QSettings, QTimer
-from PySide6.QtGui import QColor, QKeySequence, QShortcut
+from PySide6.QtGui import QColor, QKeySequence, QShortcut, QAction
 from PySide6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QSplitter,
                                QComboBox, QPushButton, QListWidget, QListWidgetItem,
                                QGridLayout, QMenu, QApplication,
                                QFileDialog, QMessageBox, QLabel, QProgressDialog, QTabWidget,
-                               QDialog, QInputDialog, QLineEdit)
+                               QDialog, QInputDialog, QLineEdit, QFrame)
 
 from .. import db
 from .. import mapping as map_svc
@@ -31,6 +31,8 @@ from .binding_workbench import BindingWorkbench
 from .project_properties import ProjectPropertiesPanel
 from .canvas_toolbar import CanvasToolbar
 from .selection_bar import SelectionBar
+from .history_panel import HistoryPanel
+from .entity_properties import EntityPropertiesPanel
 from . import theme as T
 from .ui_utils import save_window_state, restore_window_state
 
@@ -80,7 +82,7 @@ _HELP_HTML = """
 <tr><td><b>Ctrl&nbsp;+&nbsp;N</b></td><td>新建项目</td></tr>
 <tr><td><b>Ctrl&nbsp;+&nbsp;O</b></td><td>打开图纸</td></tr>
 <tr><td><b>Ctrl&nbsp;+&nbsp;S</b></td><td>导出算量清单 (Excel)</td></tr>
-<tr><td><b>Ctrl&nbsp;+&nbsp;1 … 5</b></td><td>切换到右侧第 1~5 个标签页（BOQ/计量/图例标定/绑定工作台/项目属性）</td></tr>
+<tr><td><b>Ctrl&nbsp;+&nbsp;1 … 6</b></td><td>切换右侧工作区：1 绑定工作台 / 2 BOQ 清单 / 3 计量 / 4 图例标定 / 5 实体属性 / 6 项目属性</td></tr>
 <tr><td><b>Ctrl&nbsp;+&nbsp;B</b></td><td>折叠/展开左侧面板</td></tr>
 <tr><td><b>Ctrl&nbsp;+&nbsp;Alt&nbsp;+&nbsp;B</b></td><td>折叠/展开右侧面板</td></tr>
 <tr><td><b>Ctrl&nbsp;+&nbsp;Z</b></td><td>撤销最近一次关联/删映射（输入框中则撤销文字）</td></tr>
@@ -364,7 +366,8 @@ class MainWindow(QMainWindow):
             "2. 「打开图纸」载入 DWG/DXF（或「更多 → 批量导入文件夹」）\n"
             "3. 「更多 → 导入 BOQ」导入 Excel 工程量清单\n"
             "4. 「AI 算量」自动识别设备并生成候选；或用「绑定工作台」人工复核确认\n\n"
-            "右侧工作区有 5 个标签页：BOQ 清单 / 计量 / 图例标定 / 绑定工作台 / 项目属性。\n"
+            "右侧工作区有 7 个页面：绑定工作台 / BOQ 清单 / 计量 / 图例标定 /\n"
+            "实体属性 / 项目属性 / 操作记录（右栏 rail 或 Ctrl+1..6 切换）。\n"
             "更多说明见「更多 → 使用说明」(F1)。")
         box.setStandardButtons(QMessageBox.Ok)
         box.setWindowModality(Qt.NonModal)
@@ -385,35 +388,64 @@ class MainWindow(QMainWindow):
         split_main = QSplitter(Qt.Horizontal)
         self._split_main = split_main
 
-        # 左栏：图纸 / 图层（项目选择已移至顶栏）
+        # 左栏（main.html 1:1）：「图纸 / Sheet」头部行 + 搜索 + 卡片式图纸列表 + 图层/块
         left = QWidget()
         lv = QVBoxLayout(left)
-        lv.setContentsMargins(8, 8, 8, 0)
-        lv.setSpacing(4)
+        lv.setContentsMargins(0, 0, 0, 0)
+        lv.setSpacing(0)
 
-        t_sheets = QLabel("项目 / 图纸")
-        t_sheets.setObjectName("secTitle")
-        lv.addWidget(t_sheets)
+        # 头部行：标题 + 添加/删除图标按钮（h-11）
+        head = QWidget()
+        head.setObjectName("panelHeader")
+        hh = QHBoxLayout(head)
+        hh.setContentsMargins(12, 0, 8, 0)
+        hh.setSpacing(2)
+        t_sheets = QLabel("图纸 / Sheet")
+        t_sheets.setObjectName("panelTitle")
+        hh.addWidget(t_sheets)
+        hh.addStretch(1)
+
+        def _fluent(key: str, fallback: str) -> str:
+            return T.ICONS.get(key, fallback) if T.icon_font_family() else fallback
+
+        self.btn_add_sheet = QPushButton(_fluent("add", "＋"))
+        self.btn_add_sheet.setObjectName("panelIconBtn")
+        self.btn_add_sheet.setToolTip("添加图纸 (Ctrl+O)")
+        self.btn_add_sheet.clicked.connect(self.open_drawing)
+        hh.addWidget(self.btn_add_sheet)
+        self.btn_del_sheet = QPushButton(_fluent("trash", "－"))
+        self.btn_del_sheet.setObjectName("panelIconBtnDanger")
+        self.btn_del_sheet.setToolTip("删除选中图纸")
+        self.btn_del_sheet.clicked.connect(self._delete_sheet)
+        hh.addWidget(self.btn_del_sheet)
+        if T.icon_font_family():
+            f = T.make_icon_font(14)
+            if f:
+                self.btn_add_sheet.setFont(f)
+                self.btn_del_sheet.setFont(f)
+        lv.addWidget(head)
+
+        # 搜索框（bg-slate-50，placeholder「搜索图纸或图层」；隐藏非匹配行，row 索引不变）
+        search_wrap = QWidget()
+        sw = QVBoxLayout(search_wrap)
+        sw.setContentsMargins(12, 8, 12, 4)
+        sw.setSpacing(0)
+        self.sheet_search = QLineEdit()
+        self.sheet_search.setObjectName("sheetSearch")
+        self.sheet_search.setPlaceholderText("搜索图纸或图层")
+        self.sheet_search.setClearButtonEnabled(True)
+        self.sheet_search.textChanged.connect(self._filter_sheets)
+        sw.addWidget(self.sheet_search)
+        lv.addWidget(search_wrap)
+
         self.sheet_list = QListWidget()
-        self.sheet_list.setMaximumHeight(140)
+        self.sheet_list.setObjectName("sheetList")
         # P3：批量删除图纸支持 → 开启多选（Ctrl/Shift；空白处单击取消全选）
         from PySide6.QtWidgets import QAbstractItemView
         self.sheet_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.sheet_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.sheet_list.customContextMenuRequested.connect(self._on_sheet_context_menu)
-        lv.addWidget(self.sheet_list)
-
-        # 图纸管理按钮行：添加 / 删除图纸
-        sheet_btns = QHBoxLayout()
-        sheet_btns.setSpacing(4)
-        self.btn_add_sheet = QPushButton("＋ 添加图纸")
-        self.btn_add_sheet.clicked.connect(self.open_drawing)
-        self.btn_del_sheet = QPushButton("－ 删除图纸")
-        self.btn_del_sheet.setObjectName("dangerBtn")
-        self.btn_del_sheet.clicked.connect(self._delete_sheet)
-        sheet_btns.addWidget(self.btn_add_sheet)
-        sheet_btns.addWidget(self.btn_del_sheet)
-        lv.addLayout(sheet_btns)
+        lv.addWidget(self.sheet_list, 2)
 
         t_layers = QLabel("图层 / 块")
         t_layers.setObjectName("secTitle")
@@ -421,8 +453,8 @@ class MainWindow(QMainWindow):
         self.layer_tree = LayerTreeWidget()
         lv.addWidget(self.layer_tree, 1)
 
-        # 底部收起按钮（v2）
-        self.btn_collapse_left = QPushButton("〈 收起侧栏")
+        # 底部收起按钮（原型「收起资源面板」）
+        self.btn_collapse_left = QPushButton("收起资源面板")
         self.btn_collapse_left.setObjectName("collapseBtn")
         self.btn_collapse_left.clicked.connect(lambda: self._toggle_panel("left"))
         lv.addWidget(self.btn_collapse_left)
@@ -433,43 +465,52 @@ class MainWindow(QMainWindow):
         split_main.addWidget(left)
         self._left_panel = left
 
-        # 中间：画布 + 浮层（工具栏浮左上 / 选择状态浮左下 / 提示浮右下）
+        # 中间：深色画布区（v3：工具条通栏置顶 / 选择状态浮左下 / 提示浮右下）
         wrap = QWidget()
         wrap.setObjectName("canvasWrap")
         grid = QGridLayout(wrap)
-        grid.setContentsMargins(12, 12, 12, 12)
+        grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(0)
 
-        self.canvas = CanvasView()
-        self.canvas.setMinimumWidth(400)
-        grid.addWidget(self.canvas, 0, 0)
-
-        # 浮层工具栏
+        # 顶部工具条：通栏深色条（main.html 对齐，不再浮动）
         fb = QWidget()
         fb.setObjectName("floatBar")
         fh = QHBoxLayout(fb)
-        fh.setContentsMargins(4, 2, 4, 2)
+        fh.setContentsMargins(0, 0, 0, 0)
         fh.setSpacing(0)
         self.canvas_toolbar = CanvasToolbar()
         fh.addWidget(self.canvas_toolbar)
-        grid.addWidget(fb, 0, 0, Qt.AlignTop | Qt.AlignLeft)
+        grid.addWidget(fb, 0, 0)
+
+        self.canvas = CanvasView()
+        self.canvas.setMinimumWidth(400)
+        grid.addWidget(self.canvas, 1, 0)
 
         # 左下：选择状态浮层
         self.selection_bar = SelectionBar()
         self.selection_bar.setObjectName("selOverlay")
-        grid.addWidget(self.selection_bar, 0, 0, Qt.AlignBottom | Qt.AlignLeft)
+        grid.addWidget(self.selection_bar, 1, 0, Qt.AlignBottom | Qt.AlignLeft)
 
         # 右下：操作提示
         hint = QLabel("双击/框选实体 · 回车分配到当前 BOQ 行")
         hint.setObjectName("hintLabel")
-        grid.addWidget(hint, 0, 0, Qt.AlignBottom | Qt.AlignRight)
+        grid.addWidget(hint, 1, 0, Qt.AlignBottom | Qt.AlignRight)
 
         split_main.addWidget(wrap)
 
-        # 右栏：标签页（BOQ / 计量映射 / 图例标定 / 绑定工作台 / 项目属性）
+        # 右栏：图标 rail + 工作区页面（v3，main.html 对齐）
+        # 结构：rail(52px 图标/短词按钮) + QTabWidget(原生 tabBar 隐藏)。
+        # 三入口镜像：rail 按钮 / 画布工具条工作区按钮 / Ctrl+1..6 → 同一 setCurrentIndex。
         right = QWidget()
-        rv = QVBoxLayout(right)
+        rv = QHBoxLayout(right)
         rv.setContentsMargins(0, 0, 0, 0)
+        rv.setSpacing(0)
+        rv.addWidget(self._build_right_rail())
+
+        pages = QVBoxLayout()
+        pages.setContentsMargins(0, 0, 0, 0)
+        rv.addLayout(pages, 1)
+
         self.boq_table = BoqTable()
         # P1-10：BOQ 搜索框（过滤行 + 命中高亮）
         self.boq_search = QLineEdit()
@@ -486,22 +527,30 @@ class MainWindow(QMainWindow):
         self.legend_panel = LegendPanel()
         self.binding_workbench = BindingWorkbench()
         self.project_properties = ProjectPropertiesPanel()
+        self.entity_properties = EntityPropertiesPanel()
+        self.history_panel = HistoryPanel()
         self.right_tabs = QTabWidget()
-        self.right_tabs.setMovable(True)
+        self.right_tabs.setMovable(False)
+        self.right_tabs.addTab(self.binding_workbench, "绑定工作台")
         self.right_tabs.addTab(self.boq_page, "BOQ 清单")
         self.right_tabs.addTab(self.mapping_panel, "计量")
         self.right_tabs.addTab(self.legend_panel, "图例标定")
-        self.right_tabs.addTab(self.binding_workbench, "绑定工作台")
+        self.right_tabs.addTab(self.entity_properties, "实体属性")
         self.right_tabs.addTab(self.project_properties, "项目属性")
-        # P1-14 模式→标签页 1:1 映射（与 canvas_toolbar.CONTEXT_MODES 对齐）
+        self.right_tabs.addTab(self.history_panel, "操作记录")
+        self.right_tabs.tabBar().hide()
+        # 模式→标签页映射（v3 顺序：绑定/BOQ/计量/图例/属性/项目/记录）
         self._mode_tab_map = {
-            "browse": 0,    # 清单
-            "mapping": 1,   # 计量
-            "legend": 2,    # 图例标定
-            "ai": 3,        # 绑定工作台
-            "props": 4,     # 项目属性
+            "browse": 1,    # BOQ 清单
+            "mapping": 2,   # 计量
+            "legend": 3,    # 图例标定
+            "ai": 0,        # 绑定工作台
+            "props": 5,     # 项目属性
         }
-        rv.addWidget(self.right_tabs)
+        pages.addWidget(self.right_tabs)
+        # rail/工具条镜像同步（rail 构建时 right_tabs 尚未存在，故在此接线）
+        self.right_tabs.currentChanged.connect(self._on_right_tab_changed)
+        self._rail_buttons[0].setChecked(True)
         right.setMinimumWidth(330)
         right.setObjectName("panel")
         split_main.addWidget(right)
@@ -534,62 +583,138 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self.btn_history)
         self.statusBar().messageChanged.connect(self._on_status_message)
         self.statusBar().showMessage("就绪")
+        self._build_toast()
+
+    # ---------- Toast 浮层（v3 main.html：操作反馈右下弹出，2.6s 自动消失） ----------
+    def _build_toast(self):
+        self._toast = QLabel(self)
+        self._toast.setObjectName("toastLabel")
+        self._toast.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._toast.hide()
+        self._toast_timer = QTimer(self)
+        self._toast_timer.setSingleShot(True)
+        self._toast_timer.timeout.connect(self._toast.hide)
+
+    def show_toast(self, text: str, kind: str = "info", duration_ms: int = 2600):
+        """kind: info（深） / success（绿） / warning（琥珀）。"""
+        if not text:
+            return
+        colors = {
+            "success": (T.SUCCESS_BG, "#FFFFFF"),
+            "warning": (T.WARNING_BAR_TEXT, "#FFFFFF"),
+        }
+        bg, fg = colors.get(kind, (T.OVERLAY_BG, T.OVERLAY_TEXT))
+        self._toast.setStyleSheet(
+            f"QLabel#toastLabel {{ background:{bg}; color:{fg}; border-radius:6px;"
+            f" padding:8px 16px; font-size:{T.FONT_SIZE_BODY}px; }}")
+        self._toast.setText(text)
+        self._toast.adjustSize()
+        m = 24
+        x = self.width() - self._toast.width() - m
+        y = self.height() - self.statusBar().height() - self._toast.height() - m
+        self._toast.move(max(m, x), max(m, y))
+        self._toast.show()
+        self._toast.raise_()
+        self._toast_timer.start(duration_ms)
+
+    @staticmethod
+    def _toast_kind(text: str) -> str:
+        """按消息语义定 Toast 颜色：失败→warning，完成/确认→success，其余→info。"""
+        if ("失败" in text) or text.startswith("⚠") or "已忽略" in text or "请先" in text:
+            return "warning"
+        if text.startswith(("已确认", "已恢复")) or "完成" in text:
+            return "success"
+        return "info"
 
     def _build_topbar(self) -> QWidget:
-        """v2 顶部品牌栏：主动作区 + More 收口低频功能，减少顶部拥挤。"""
+        """v3 顶栏（main.html 1:1）：品牌块 / 项目 / 新建 / 打开 / AI 算量▾ / 导出 / ⚙ / 更多▾。"""
         bar = QWidget()
         bar.setObjectName("topbar")
-        bar.setFixedHeight(52)
+        bar.setFixedHeight(T.TOPBAR_HEIGHT)
         h = QHBoxLayout(bar)
-        h.setContentsMargins(14, 6, 14, 6)
+        h.setContentsMargins(16, 6, 16, 6)
         h.setSpacing(8)
 
-        brand = QLabel("图纸算量")
-        brand.setObjectName("brand")
-        sub = QLabel("CAD·BOQ")
-        sub.setObjectName("brandSub")
-        h.addWidget(brand)
-        h.addWidget(sub)
-        h.addSpacing(12)
+        def _icon(key: str) -> str:
+            """Fluent 图标文本；无图标字体时回退空（按钮仍有文字）。"""
+            if T.icon_font_family() is None:
+                return ""
+            return T.ICONS.get(key, "") + " "
 
+        # ---- 品牌块：cyan 方块图标 + 双行标题，右侧分隔线 ----
+        brand_icon = QLabel(T.ICONS.get("document", "图") if T.icon_font_family() else "图")
+        brand_icon.setObjectName("brandIcon")
+        brand_icon.setFixedSize(28, 28)
+        brand_icon.setAlignment(Qt.AlignCenter)
+        if T.icon_font_family():
+            f = T.make_icon_font(17)
+            if f:
+                brand_icon.setFont(f)
+        brand_icon.setToolTip("图纸算量 CAD·BOQ")
+        h.addWidget(brand_icon)
+
+        brand_col = QVBoxLayout()
+        brand_col.setSpacing(0)
+        title = QLabel('图纸算量 <span style="color:#22D3EE">CAD·BOQ</span>')
+        title.setObjectName("brandTitle")
+        title.setTextFormat(Qt.RichText)
+        sub = QLabel("电气工程数量智能核算")
+        sub.setObjectName("brandSub")
+        brand_col.addWidget(title)
+        brand_col.addWidget(sub)
+        h.addLayout(brand_col)
+
+        div1 = QFrame()
+        div1.setFrameShape(QFrame.VLine)
+        div1.setStyleSheet(f"color: {T.TOPBAR_BORDER};")
+        div1.setFixedHeight(20)
+        h.addWidget(div1)
+        h.addSpacing(4)
+
+        # ---- 项目下拉（QComboBox 保留原生交互，样式对齐深色描边） ----
         self.project_combo = QComboBox()
-        self.project_combo.setMinimumWidth(160)
-        h.addWidget(QLabel("项目："))
+        self.project_combo.setMinimumWidth(202)
+        self.project_combo.setToolTip("切换项目（右键：重命名 / 删除）")
         h.addWidget(self.project_combo)
 
-        self.btn_new_project = QPushButton("新建")
+        self.btn_new_project = QPushButton(_icon("add") + "新建")
+        self.btn_new_project.setObjectName("topBtn")
         self.btn_new_project.clicked.connect(self.new_project)
         h.addWidget(self.btn_new_project)
 
-        self.btn_open = QPushButton("打开图纸")
+        self.btn_open = QPushButton(_icon("open") + "打开图纸")
+        self.btn_open.setObjectName("topBtn")
         self.btn_open.clicked.connect(self.open_drawing)
         h.addWidget(self.btn_open)
 
-        # 关键主操作：保留在首屏，减少拥挤
-        self.btn_ai = QPushButton("AI 算量")
-        self.btn_ai.setObjectName("primaryBtn")
+        div2 = QFrame()
+        div2.setFrameShape(QFrame.VLine)
+        div2.setStyleSheet(f"color: {T.TOPBAR_BORDER};")
+        div2.setFixedHeight(20)
+        h.addWidget(div2)
+        h.addSpacing(4)
+
+        # ---- AI 算量 hero（cyan 实心 + 下拉三选项，原型 runAI 三入口） ----
+        self.btn_ai = QPushButton(_icon("magic") + "AI 算量")
+        self.btn_ai.setObjectName("heroBtn")
         ai_menu = QMenu(self)
-        ai_menu.addAction("AI 自动算量（当前图纸）", self.ai_takeoff_current)
-        ai_menu.addAction("AI 自动算量（单图…）", self.ai_takeoff_single)
-        ai_menu.addAction("AI 自动算量（文件夹…）", self.ai_takeoff_folder)
+        ai_menu.addAction("识别当前图纸", self.ai_takeoff_current)
+        ai_menu.addAction("批量识别全部图纸", self.ai_takeoff_folder)
+        ai_menu.addSeparator()
+        ai_menu.addAction("从文件夹批量导入", self.import_folder_drawings)
         self.btn_ai.setMenu(ai_menu)
         h.addWidget(self.btn_ai)
 
-        self.btn_export = QPushButton("导出")
+        self.btn_export = QPushButton(_icon("export") + "导出")
+        self.btn_export.setObjectName("topBtn")
         self.btn_export.clicked.connect(self.export_report)
         h.addWidget(self.btn_export)
 
-        self.btn_settings = QPushButton("项目设置")
-        self.btn_settings.setToolTip("图层/设备筛选规则（图层归类 4 桶 + 批量操作 + 智能推荐）")
-        self.btn_settings.clicked.connect(self.open_project_settings)
-        h.addWidget(self.btn_settings)
-
         h.addStretch(1)
 
+        # ---- 更多▾：低频工具 + 视图/过滤（原工具栏入口收拢于此） ----
         more_menu = QMenu(self)
         self._more_actions: dict[str, object] = {}
-        self._more_actions["import_folder"] = more_menu.addAction(
-            "批量导入文件夹", self.import_folder_drawings)
         self._more_actions["import_boq"] = more_menu.addAction(
             "导入 BOQ", self.import_boq)
         self._more_actions["repair_boq"] = more_menu.addAction(
@@ -603,24 +728,87 @@ class MainWindow(QMainWindow):
             "图例标定", self.focus_legend)
         self._more_actions["binding"] = more_menu.addAction(
             "绑定工作台", self.focus_binding)
-        self._more_actions["help"] = more_menu.addAction(
-            "使用说明", self.show_help)
-        more_menu.addSeparator()
+        self._more_actions["settings"] = more_menu.addAction(
+            "项目设置…", self.open_project_settings)
         self._more_actions["llm"] = more_menu.addAction(
-            "⚙ LLM 设置", self.open_llm_settings)
+            "LLM 设置…", self.open_llm_settings)
+        more_menu.addSeparator()
+        # 视图 / 实体过滤：占位菜单，_build_ui 中 canvas_toolbar 建好后填充
+        self._view_menu = more_menu.addMenu("视图")
+        self._type_menu = more_menu.addMenu("实体类型过滤")
 
-        btn_more = QPushButton("更多")
+        btn_more = QPushButton("更多 " + T.ICONS.get("chevron", ""))
+        btn_more.setObjectName("topBtn")
         btn_more.setMenu(more_menu)
-        btn_more.setToolTip("低频工具入口：批量处理、图例、绑定、帮助、LLM 配置")
+        btn_more.setToolTip("低频工具 / 视图 / 实体过滤 / 设置")
         h.addWidget(btn_more)
 
-        # ⚙ 顶层快捷入口（P0-2）：LLM 设置是高频配色需求，保留首屏直达
-        btn_llm = QPushButton("⚙ LLM")
-        btn_llm.setToolTip("LLM 设置中心：切换后端 / 测速 / Fallback")
-        btn_llm.clicked.connect(self.open_llm_settings)
-        h.addWidget(btn_llm)
+        # ---- ⚙ 设置齿轮（项目设置 / LLM 设置） ----
+        gear = QPushButton(T.ICONS.get("settings", "⚙"))
+        gear.setObjectName("iconBtn")
+        gear.setToolTip("设置：项目规则 / LLM 后端")
+        gear_menu = QMenu(self)
+        gear_menu.addAction("项目设置…", self.open_project_settings)
+        gear_menu.addAction("LLM 设置…", self.open_llm_settings)
+        gear.setMenu(gear_menu)
+        if T.icon_font_family():
+            f = T.make_icon_font(15)
+            if f:
+                gear.setFont(f)
+        h.addWidget(gear)
 
         return bar
+
+    def _build_right_rail(self) -> QWidget:
+        """右栏图标 rail（v3）：与 right_tabs 索引一一对应的镜像入口。
+
+        按钮顺序 = right_tabs 顺序：绑定 / 清单 / 计量 / 图例 / 属性 / 项目 / 记录。
+        （第一步先短文字按钮，图标资源在后续步骤替换为 SVG。）
+        """
+        from PySide6.QtWidgets import QToolButton, QButtonGroup
+
+        rail = QWidget()
+        rail.setObjectName("railBar")
+        rail.setFixedWidth(T.RIGHT_RAIL_W)
+        v = QVBoxLayout(rail)
+        v.setContentsMargins(4, 8, 4, 8)
+        v.setSpacing(4)
+
+        labels = ["绑定", "清单", "计量", "图例", "属性", "项目", "记录"]
+        tips = ["绑定工作台：AI/规则候选审核", "BOQ 清单", "计量映射",
+                "图例标定", "实体属性（当前选择）", "项目属性", "操作记录"]
+        self._rail_group = QButtonGroup(self)
+        self._rail_group.setExclusive(True)
+        self._rail_buttons: list[QToolButton] = []
+        for i, (text, tip) in enumerate(zip(labels, tips)):
+            btn = QToolButton()
+            btn.setObjectName("railBtn")
+            btn.setText(text)
+            btn.setCheckable(True)
+            btn.setToolTip(tip)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(lambda _checked=False, idx=i: self.right_tabs.setCurrentIndex(idx))
+            self._rail_group.addButton(btn, i)
+            self._rail_buttons.append(btn)
+            v.addWidget(btn)
+        v.addStretch(1)
+
+        btn_help = QToolButton()
+        btn_help.setObjectName("railBtn")
+        btn_help.setText("帮助")
+        btn_help.setToolTip("使用说明 (F1)")
+        btn_help.setCursor(Qt.PointingHandCursor)
+        btn_help.clicked.connect(self.show_help)
+        v.addWidget(btn_help)
+
+        return rail
+
+    def _on_right_tab_changed(self, idx: int):
+        """tab 切换的唯一汇合点：rail 高亮 + 工具条工作区按钮镜像（不回发信号）。"""
+        if 0 <= idx < len(self._rail_buttons):
+            btn = self._rail_buttons[idx]
+            btn.setChecked(True)
+        self.canvas_toolbar.sync_context_from_tab(idx)
 
     def _update_stats(self):
         """更新底部状态栏：项目 / 图纸 / 工作模式 / 统计信息"""
@@ -631,33 +819,19 @@ class MainWindow(QMainWindow):
         """statusBar 消息变时抓进环形缓存（自动覆盖所有 showMessage 调用点）。"""
         if not text:
             return
-        self._history.append((time.time(), text))
+        entry = (time.time(), text)
+        self._history.append(entry)
         if len(self._history) > 200:
             del self._history[:len(self._history) - 200]
+        # v3：操作记录面板实时跟随（面板与状态栏同源）
+        if hasattr(self, "history_panel"):
+            self.history_panel.add_entry(*entry)
 
     def _toggle_history(self):
-        """弹出「最近操作」浮层（QMenu + QListWidget）。"""
-        from PySide6.QtWidgets import QMenu, QWidgetAction, QListWidget, QListWidgetItem
-        from PySide6.QtCore import QPoint
-
-        menu = QMenu(self)
-        menu.setMinimumWidth(460)
-        lst = QListWidget()
-        lst.setMinimumSize(460, 320)
-        for ts, msg in reversed(self._history[-100:]):
-            hh = time.strftime("%H:%M:%S", time.localtime(ts))
-            item = QListWidgetItem(f"[{hh}] {msg}")
-            item.setToolTip(msg)
-            lst.addItem(item)
-        if not self._history:
-            lst.addItem("（暂无操作记录）")
-
-        action = QWidgetAction(menu)
-        action.setDefaultWidget(lst)
-        menu.addAction(action)
-        # 在按钮下方弹出
-        pos = self.btn_history.mapToGlobal(self.btn_history.rect().bottomLeft())
-        menu.exec(pos)
+        """v3：状态栏「🕘 记录」→ 切到右栏操作记录面板（原浮层已升级为面板）。"""
+        self._right_panel.setVisible(True)
+        self.canvas_toolbar.btn_right.setChecked(True)
+        self.right_tabs.setCurrentIndex(6)   # 6 = 操作记录
 
     def _build_menu(self):
         """v2：菜单栏已由顶部品牌栏替代（保留空实现以兼容外部调用）"""
@@ -683,7 +857,7 @@ class MainWindow(QMainWindow):
         sc_export.activated.connect(self.export_report)
         sc_help = QShortcut(QKeySequence("F1"), self)
         sc_help.activated.connect(self.show_help)
-        for i in range(1, 6):
+        for i in range(1, 7):
             sc = QShortcut(QKeySequence(f"Ctrl+{i}"), self)
             sc.activated.connect(lambda _i=i: self._on_ctrl_tab_shortcut(_i))
 
@@ -721,7 +895,10 @@ class MainWindow(QMainWindow):
         # 绑定工作台
         self.binding_workbench.locateRequested.connect(self._on_binding_locate)
         self.binding_workbench.statusMessage.connect(self.statusBar().showMessage)
+        self.binding_workbench.statusMessage.connect(
+            lambda t: self.show_toast(t, self._toast_kind(t)))
         self.binding_workbench.bindingChanged.connect(self._recalc_and_refresh)
+        self.binding_workbench.bindingChanged.connect(self._refresh_sheet_badges)
 
         # Phase 1 工具栏
         self.canvas_toolbar.modeChanged.connect(self._on_mode_changed)
@@ -730,9 +907,33 @@ class MainWindow(QMainWindow):
         self.canvas_toolbar.zoomActualRequested.connect(self.canvas.zoom_actual)
         self.canvas_toolbar.zoomBackRequested.connect(self.canvas.zoom_back)
         self.canvas_toolbar.zoomForwardRequested.connect(self.canvas.zoom_forward)
+        # 原型 zoom(±10)：每步 ×1.15；读数由画布 scaleChanged 回推（滚轮同样生效）
+        self.canvas_toolbar.zoomInRequested.connect(
+            lambda: self.canvas.zoom_step(1.15))
+        self.canvas_toolbar.zoomOutRequested.connect(
+            lambda: self.canvas.zoom_step(1 / 1.15))
+        self.canvas.scaleChanged.connect(self.canvas_toolbar.set_zoom_pct)
+        self.canvas_toolbar.set_zoom_pct(self.canvas.current_scale())
         self.canvas_toolbar.themeToggleRequested.connect(self._on_theme_toggle)
         self.canvas_toolbar.fullscreenToggleRequested.connect(self._toggle_fullscreen)
         self.canvas_toolbar.entityTypeVisibilityChanged.connect(self.canvas.set_type_visible)
+
+        # 顶栏「更多 ▾」占位菜单回填：视图 / 实体类型过滤（_build_topbar 时工具栏未建）
+        if getattr(self, "_view_menu", None) is not None:
+            vm = self._view_menu
+            vm.addAction(self.canvas_toolbar.btn_theme)
+            vm.addAction(self.canvas_toolbar.btn_full)
+            vm.addSeparator()
+            vm.addAction(self.canvas_toolbar.btn_left)
+            vm.addAction(self.canvas_toolbar.btn_right)
+        if getattr(self, "_type_menu", None) is not None:
+            for act in self.canvas_toolbar.type_actions.values():
+                self._type_menu.addAction(act)
+        # 快捷键：Ctrl+0 整图（Ctrl+1=100% 已由 _on_ctrl_tab_shortcut 在画布聚焦时承接）
+        act_fit = QAction("整图", self)
+        act_fit.setShortcut(QKeySequence("Ctrl+0"))
+        act_fit.triggered.connect(self.canvas.zoom_fit)
+        self.addAction(act_fit)
         # 初始化同步：工具栏默认关闭 TEXT/HATCH，画布需一致（否则"杂线/文字"全显示）
         for t in ("HATCH", "TEXT", "MTEXT"):
             self.canvas.set_type_visible(t, False)
@@ -744,6 +945,8 @@ class MainWindow(QMainWindow):
         # Phase 3 选择状态条
         self.selection_bar.assignRequested.connect(self._commit_pending)
         self.selection_bar.clearRequested.connect(self._clear_pending)
+        # v3 实体属性面板：分配入口与选择条同一落点
+        self.entity_properties.assignRequested.connect(self._commit_pending)
 
     # ---------- 模式 / 主题 / 全屏 / 设置 ----------
     def _on_mode_changed(self, mode: str):
@@ -760,24 +963,17 @@ class MainWindow(QMainWindow):
         self._refresh_status_breadcrumb()
 
     def _refresh_status_breadcrumb(self):
-        """底部状态栏：项目 / 图纸 / 工作模式 / 统计"""
+        """底部状态栏（main.html 1:1）：实体 N · 图层 N · BOQ N · 模式 X"""
         mode_labels = {
             "browse": "清单", "mapping": "计量", "legend": "图例",
-            "ai": "绑定", "props": "属性",
+            "ai": "绑定", "props": "属性", "pick": "拾取",
         }
-        proj = self.project_combo.currentText() or "—"
-        sheet = "—"
-        item = self.sheet_list.currentItem()
-        if item:
-            sheet = item.text().split("  (")[0]
         mode = mode_labels.get(
             getattr(self.canvas_toolbar, "_context_mode", "browse"), "清单")
-        stats = (
-            f"实体 {getattr(self, '_stat_entities', 0)} · "
-            f"图层 {getattr(self, '_stat_layers', 0)} · "
-            f"BOQ {getattr(self, '_stat_boq', 0)}")
         self._stat_label.setText(
-            f"{proj} / {sheet} / {mode}    {stats}")
+            f"实体 {getattr(self, '_stat_entities', 0):,} · "
+            f"图层 {getattr(self, '_stat_layers', 0):,} · "
+            f"BOQ {getattr(self, '_stat_boq', 0):,} · 模式 {mode}")
 
     def _on_theme_toggle(self):
         self._dark = self.canvas_toolbar.btn_theme.isChecked()
@@ -1011,17 +1207,99 @@ class MainWindow(QMainWindow):
         self._reload_projects()
         self.statusBar().showMessage(f"已删除项目：{name}")
 
+    @staticmethod
+    def _sheet_status_visual(st) -> tuple[str, str, str]:
+        """图纸状态 → (状态文本, 文字色, 状态点色)。
+
+        原型：cyan-500 已识别 / amber-400 待复核 / slate-300 未执行 AI。
+        """
+        if st is None:
+            return ("未开始", T.TEXT_DISABLED, "#CBD5E1")
+        if st["pending"]:
+            return (f"待复核 {st['pending']}", T.WARNING_BAR_TEXT, "#FBBF24")
+        if st["accepted"]:
+            return (f"已确认 {st['accepted']}", T.SUCCESS_BG, "#06B6D4")
+        return ("已提取", T.ACCENT_LINK, "#06B6D4")
+
     def _reload_sheets(self):
         self.sheet_list.clear()
+        self._sheet_badge_labels = {}
+        self._sheet_dot_labels = {}
         if self._project_id is None:
             return
         base = db.get_base_sheet(self._project_id)
         base_id = base.id if base else None
+        stats = db.sheet_candidate_stats(self._project_id)
+        fm = self.sheet_list.fontMetrics()
         for s in db.get_sheets(self._project_id):
             prefix = "[底图] " if s.id == base_id else ""
-            item = QListWidgetItem(f"{prefix}{s.filename}  ({s.entity_count} 实体)")
+            item = QListWidgetItem()
             item.setData(Qt.UserRole, s.id)
+            item.setData(Qt.UserRole + 1, s.filename)   # 搜索/面包屑用
+            tip = f"{prefix}{s.filename} · {s.entity_count:,} 实体"
+            st = stats.get(s.id)
+            if st is not None:
+                tip += (f" · 工程对象 {st['objects']} · 待复核 {st['pending']}"
+                        f" · 已确认 {st['accepted']}")
+            item.setToolTip(tip)
             self.sheet_list.addItem(item)
+
+            # 卡片行（原型 1:1）：行1 = 状态点 + 文件名 + 右侧实体数；行2 = 状态 caption
+            row = QWidget()
+            v = QVBoxLayout(row)
+            v.setContentsMargins(10, 6, 10, 6)
+            v.setSpacing(2)
+            l1 = QHBoxLayout()
+            l1.setSpacing(6)
+            st_text, st_fg, dot_hex = self._sheet_status_visual(st)
+            dot = QLabel()
+            dot.setFixedSize(8, 8)
+            dot.setStyleSheet(
+                f"background:{dot_hex}; border-radius:4px;")
+            l1.addWidget(dot)
+            name = QLabel(prefix + fm.elidedText(
+                s.filename, Qt.ElideMiddle, 160))
+            name.setStyleSheet(f"color:{T.TEXT_PRIMARY};")
+            l1.addWidget(name, 1)
+            count = QLabel(f"{s.entity_count:,}")
+            count.setStyleSheet(
+                f"color:{T.TEXT_DISABLED}; font-size:{T.FONT_SIZE_CAPTION}px;")
+            l1.addWidget(count)
+            v.addLayout(l1)
+            caption = QLabel(st_text)
+            caption.setStyleSheet(
+                f"color:{st_fg}; font-size:{T.FONT_SIZE_CAPTION}px;"
+                f" padding-left:14px;")
+            v.addWidget(caption)
+            item.setSizeHint(row.sizeHint())
+            self.sheet_list.setItemWidget(item, row)
+            self._sheet_badge_labels[s.id] = caption
+            self._sheet_dot_labels[s.id] = dot
+        self._filter_sheets(self.sheet_search.text())
+
+    def _filter_sheets(self, text: str):
+        """图纸搜索：隐藏非匹配行（row 索引不变，_on_sheet_changed 映射仍成立）。"""
+        kw = (text or "").strip().lower()
+        for i in range(self.sheet_list.count()):
+            it = self.sheet_list.item(i)
+            name = it.data(Qt.UserRole + 1) or ""
+            it.setHidden(bool(kw) and kw not in name.lower())
+
+    def _refresh_sheet_badges(self):
+        """绑定状态变化后仅刷新状态 caption + 圆点（不重建列表，保持选中与滚动位置）。"""
+        if self._project_id is None or not hasattr(self, "_sheet_badge_labels"):
+            return
+        stats = db.sheet_candidate_stats(self._project_id)
+        dots = getattr(self, "_sheet_dot_labels", {})
+        for sid, caption in self._sheet_badge_labels.items():
+            st_text, st_fg, dot_hex = self._sheet_status_visual(stats.get(sid))
+            caption.setText(st_text)
+            caption.setStyleSheet(
+                f"color:{st_fg}; font-size:{T.FONT_SIZE_CAPTION}px;"
+                f" padding-left:14px;")
+            dot = dots.get(sid)
+            if dot is not None:
+                dot.setStyleSheet(f"background:{dot_hex}; border-radius:4px;")
 
     def _delete_sheet(self):
         """删除所选图纸（支持批量）：一次弹窗确认，不再要求输入图纸名。
@@ -1498,6 +1776,7 @@ class MainWindow(QMainWindow):
             note = "" if s.blocks_json else "（无块缓存，块引用将以红叉占位；请重新打开该图纸刷新）"
             self._stat_entities = len(entities)
             self._stat_layers = len(layers)
+            self.canvas_toolbar.set_loaded_file(s.filename)
             self._refresh_status_breadcrumb()
             self.statusBar().showMessage(f"已加载：{s.filename}（{len(entities)} 实体）{note}")
             logger.info("sheet switch complete: sheet_id=%s filename=%s entities=%d layers=%d blocks=%d elapsed_ms=%.1f",
@@ -1763,6 +2042,7 @@ class MainWindow(QMainWindow):
             new_set = cur
         self.canvas.set_pending(list(new_set))
         self.selection_bar.set_pending_count(len(new_set))
+        self._sync_entity_props()
         # 反向定位第一个被选实体的 BOQ（如果存在）
         if len(new_set) == 1:
             only = next(iter(new_set))
@@ -1864,13 +2144,19 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(msg)
         self.canvas.clear_pending()
         self.selection_bar.set_pending_count(0)
+        self._sync_entity_props()
         self.canvas.color_mapped_entities(item.id,
             map_svc.mapped_entity_ids(item.id, self._sheet_id))
         self._recalc_and_refresh(item.id)
 
+    def _sync_entity_props(self):
+        """实体属性面板跟随画布待选变化（v3）。"""
+        self.entity_properties.update_from_summary(self.canvas.pending_summary())
+
     def _clear_pending(self):
         self.canvas.clear_pending()
         self.selection_bar.set_pending_count(0)
+        self._sync_entity_props()
 
     def _on_layer_associate(self, layer: str):
         item = self._current_item()
@@ -2239,5 +2525,7 @@ class MainWindow(QMainWindow):
         self.canvas.highlight_entities(ids)          # 定位高亮：目标原色+虚线框，其余变暗
         # 引用可能遍布全图：聚焦单个引用放大（看清块形态），闪烁提示其余位置
         self.canvas.zoom_to_entities(ids[:1])
+        # v3：画布内浮标签（缩放级别无关，2.4s 自动消失）
+        self.canvas.show_tag(f"定位：{block_name} ×{len(ids)}", ids[:1])
         self.statusBar().showMessage(
             f"定位块 [{block_name}]：{len(ids)} 个引用（已高亮，ESC/点击空白取消）")

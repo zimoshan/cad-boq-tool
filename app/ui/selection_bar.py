@@ -22,12 +22,14 @@ class SelectionBar(QWidget):
         self.label.setMinimumWidth(220)
         h.addWidget(self.label)
 
-        self.btn_assign = QPushButton("分配到当前 BOQ")
+        self.btn_assign = QPushButton("分配")
+        self.btn_assign.setObjectName("primaryBtn")
+        self.btn_assign.setToolTip("分配到当前选中的 BOQ 条目（或按 Enter）")
         self.btn_assign.setEnabled(False)
         self.btn_assign.clicked.connect(self.assignRequested)
         h.addWidget(self.btn_assign)
 
-        self.btn_clear = QPushButton("清空选择")
+        self.btn_clear = QPushButton("清空")
         self.btn_clear.setEnabled(False)
         self.btn_clear.clicked.connect(self.clearRequested)
         h.addWidget(self.btn_clear)

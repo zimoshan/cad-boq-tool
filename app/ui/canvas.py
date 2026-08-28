@@ -215,6 +215,7 @@ class CanvasView(QGraphicsView):
     entityPicked = Signal(int)         # 双击
     entitiesPicked = Signal(list)      # 框选
     entityHovered = Signal(int)        # 鼠标悬停（Phase 3 用）
+    scaleChanged = Signal(float)       # 缩放读数联动（工具条 − % ＋）
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -651,6 +652,62 @@ class CanvasView(QGraphicsView):
 
         step()
 
+    # ---------- 定位浮标签（v3 main.html：定位后在目标上方显示名称标签） ----------
+    def show_tag(self, text: str, eids: list, duration_ms: int = 2400):
+        """在目标实体包围盒上方显示名称标签，duration 后自动消失。
+
+        标签用 ItemIgnoresTransformations：任意缩放级别下文字尺寸恒定，
+        保证小图元（插座等）在缩小后仍可读。
+        """
+        items = [self._entity_items.get(eid) for eid in eids if eid in self._entity_items]
+        items = [i for i in items if i is not None]
+        if not items:
+            return
+        self._clear_tag()
+        r = QRectF()
+        for it in items:
+            r = r.united(it.sceneBoundingRect())
+
+        txt = QGraphicsSimpleTextItem(text)
+        f = txt.font()
+        f.setPointSize(10)
+        f.setBold(True)
+        txt.setFont(f)
+        txt.setBrush(QColor(T.OVERLAY_TEXT))
+        txt.setFlag(QGraphicsItem.ItemIgnoresTransformations, True)
+        tb = txt.boundingRect()
+
+        bg = QGraphicsRectItem(0, 0, tb.width() + 16, tb.height() + 8)
+        bg.setBrush(QColor(15, 23, 42, 235))          # OVERLAY_BG 不透明
+        bg.setPen(QPen(QColor(T.OVERLAY_ACCENT), 1))
+        bg.setFlag(QGraphicsItem.ItemIgnoresTransformations, True)
+        bg.setZValue(9998)
+        txt.setZValue(9999)
+
+        # 场景坐标：包围盒上方居中；贴边时夹回场景内
+        w, h = bg.rect().width(), bg.rect().height()
+        x = r.center().x() - w / 2
+        y = r.top() - h - 8
+        scene_r = self._scene.itemsBoundingRect()
+        x = max(scene_r.left(), min(x, scene_r.right() - w))
+        y = max(scene_r.top(), min(y, scene_r.bottom() - h))
+        bg.setPos(x, y)
+        txt.setPos(x + 8, y + 4)
+        self._scene.addItem(bg)
+        self._scene.addItem(txt)
+        self._tag_items = [bg, txt]
+
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(duration_ms, self._clear_tag)
+
+    def _clear_tag(self):
+        for it in getattr(self, "_tag_items", []):
+            try:
+                self._scene.removeItem(it)
+            except RuntimeError:
+                pass    # 换图重建后 C++ 对象已释放，无需重复移除
+        self._tag_items = []
+
     # ---------- 缩放历史（Phase 1） ----------
     def _push_zoom(self):
         s = self.transform().m11()
@@ -665,16 +722,26 @@ class CanvasView(QGraphicsView):
         self.scale(scale, scale)
         self.centerOn(center)
         self._update_lod()
+        self.scaleChanged.emit(self.transform().m11())
 
     def zoom_fit(self):
         self._push_zoom()
         self.fitInView(self._scene.itemsBoundingRect(), Qt.KeepAspectRatio)
         self._update_lod()
+        self.scaleChanged.emit(self.transform().m11())
 
     def zoom_actual(self):
         self._push_zoom()
         c = self.mapToScene(self.viewport().rect().center())
         self._apply_zoom(1.0, c)
+        self._update_lod()
+
+    def zoom_step(self, mult: float):
+        """步进缩放（工具条 −/＋，原型 zoom(±10)：每步 ×1.15）。"""
+        s = self.transform().m11() * mult
+        c = self.mapToScene(self.viewport().rect().center())
+        self._push_zoom()
+        self._apply_zoom(s, c)
         self._update_lod()
 
     def zoom_back(self):
@@ -776,6 +843,17 @@ class CanvasView(QGraphicsView):
     def get_pending(self) -> list[int]:
         return list(self._pending_ids)
 
+    def pending_summary(self) -> list[tuple[int, str, str]]:
+        """待选实体摘要 [(entity_id, layer, dxf_type)]，供实体属性面板。"""
+        out = []
+        for eid in self._pending_ids:
+            item = self._entity_items.get(eid)
+            if item is None:
+                continue
+            out.append((eid, item.data(DATA_LAYER) or "",
+                        item.data(DATA_TYPE) or ""))
+        return out
+
     def clear_pending(self):
         if self._pending_ids:
             for eid in self._pending_ids:
@@ -791,6 +869,7 @@ class CanvasView(QGraphicsView):
             factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
             self.scale(factor, factor)
             self._update_lod()
+            self.scaleChanged.emit(self.transform().m11())
             event.accept()
         else:
             super().wheelEvent(event)

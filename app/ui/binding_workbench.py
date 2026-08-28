@@ -1,110 +1,43 @@
-"""绑定工作台（V2 任务二十六）：人工复核 AI/规则候选 → 正式绑定。
+"""绑定工作台（V2 任务二十六 / v3 main.html 1:1）：人工复核 AI/规则候选 → 正式绑定。
 
-组合现有能力，不重做 UI：
-- 工程对象列表：app/engineering（提取/分类）
+组合现有能力，不重做数据层：
 - 审核队列：app/binding（候选生成/确认/拒绝/批量确认）
 - 来源定位：复用画布 flash_entities/zoom_to_entities（经主窗口转发）
 
-工作流：选择 CAD 对象 → 显示属性/AI 推荐 → 确认/选择 BOQ → 保存 Binding → 重新计算。
+v3 1:1（design/main.html #panel-bind）：
+- 头部：标题/副标题 + info 图标 + 三段切换（待复核/已确认/已忽略，bg-slate-100 圆角容器）
+- 琥珀条：「N 个 AI 候选需要复核」+ 青色「全部确认」链接（规则满置信批量确认）
+- 卡片流：32px 类型徽标 + 标题 + 置信度徽标 + 块名/图层/图纸元信息 + 建议绑定 + 行内 定位/忽略/确认
+- 底部：通栏深色按钮「将已选 N 个实体分配至 BOQ」（信号 assignRequested → 主窗口）
+
+原工具栏（提取/生成候选/批量确认/LLM 分类/刷新）收敛为公开方法 run_*，
+由顶栏「AI 算量▾」与「更多▾」调用——界面与原型一致、功能不丢。
+确认/拒绝仍走 confirm_binding/reject_binding 单一数据源。
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal, QThread, QAbstractTableModel, QModelIndex
+from PySide6.QtCore import Qt, Signal, QThread
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-                               QTableWidget, QTableWidgetItem, QHeaderView,
-                               QPushButton, QCheckBox, QSplitter, QAbstractItemView,
-                               QLineEdit, QTableView)
+                               QPushButton, QScrollArea, QFrame, QSizePolicy)
 
 from .. import db
 from ..binding import (generate_candidates, confirm_binding, reject_binding,
                        auto_confirm_rule_candidates)
-from ..engineering import extract_and_store_engineering_objects
 from . import theme as T
 
 TYPE_LABELS = {"equipment": "设备", "linear": "线性", "area": "面积"}
-RULE_LABELS = {"count": "计数", "length": "长度", "area": "面积"}
 METHOD_LABELS = {"RULE": "规则", "EMBEDDING": "语义", "LLM": "AI", "MANUAL": "人工"}
 
-OBJ_COLS = ["实体数", "类型", "块名/图层", "系统", "规格", "规则", "置信", "状态", "所在图纸"]
-QUEUE_COLS = ["候选#", "BOQ 编号", "BOQ 描述", "方法", "置信", "理由", "操作"]
+# 卡片渲染上限：候选可能上千，全量建卡会拖慢 UI；超出部分提示用「全部确认」
+CARD_RENDER_CAP = 200
 
-
-class _ObjectGroupModel(QAbstractTableModel):
-    """工程对象分组表的虚拟模型（P2-1：QTableWidget → QAbstractTableModel）。
-
-    行数据按需取：QTableView 只对可见行调用 data()，过滤/刷新不再创建
-    上万 QTableWidgetItem。列0的 UserRole 携带分组 key（选中行复用旧逻辑）。
-    """
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._rows: list[tuple] = []       # [(key, g)]，g 为分组 dict
-        self.sheets_map: dict = {}
-        self.cand_summary: dict = {}
-
-    def set_rows(self, rows: list, sheets_map: dict, cand_summary: dict) -> None:
-        self.beginResetModel()
-        self._rows = rows
-        self.sheets_map = sheets_map or {}
-        self.cand_summary = cand_summary or {}
-        self.endResetModel()
-
-    # ---- QAbstractTableModel 接口 ----
-    def rowCount(self, parent=QModelIndex()) -> int:
-        return 0 if parent.isValid() else len(self._rows)
-
-    def columnCount(self, parent=QModelIndex()) -> int:
-        return 0 if parent.isValid() else len(OBJ_COLS)
-
-    def headerData(self, section, orientation, role=Qt.DisplayRole):
-        if role == Qt.DisplayRole and orientation == Qt.Horizontal:
-            return OBJ_COLS[section] if 0 <= section < len(OBJ_COLS) else None
-        return None
-
-    def data(self, index, role=Qt.DisplayRole):
-        if not index.isValid() or index.row() >= len(self._rows):
-            return None
-        key, g = self._rows[index.row()]
-        col = index.column()
-        if role == Qt.UserRole and col == 0:
-            return key
-        if role == Qt.DisplayRole:
-            return self._cell_text(g, col)
-        return None
-
-    # ---- 单元格格式化（与旧 _render_objects 一致） ----
-    def _cell_text(self, g: dict, col: int) -> str:
-        if col == 0:
-            return str(len(g["all_entity_ids"]))
-        if col == 1:
-            return TYPE_LABELS.get(g["object_type"], g["object_type"])
-        if col == 2:
-            return g["block_name"] or g["layer_name"]
-        if col == 3:
-            return g["system"] or "-"
-        if col == 4:
-            return g["specification"] or "-"
-        if col == 5:
-            return RULE_LABELS.get(g["quantity_rule"], g["quantity_rule"])
-        if col == 6:
-            return f"{g['confidence']:.0%}"
-        if col == 7:
-            return self._obj_state(g)
-        # col 8：所在图纸
-        names = [self.sheets_map.get(sid, f"#{sid}") for sid in g["sheets"]]
-        return ", ".join(names) if names else "-"
-
-    def _obj_state(self, g: dict) -> str:
-        eo = g["representative"]
-        accepted = self.cand_summary.get((eo.id, "ACCEPTED"), 0)
-        if accepted:
-            return "✓ 已绑定"
-        n = self.cand_summary.get((eo.id, "PENDING"), 0)
-        if n:
-            return f"待审核({n})"
-        if self.cand_summary.get((eo.id, "REJECTED"), 0):
-            return "已拒绝"
-        return "未匹配"
+# 类型徽标配色（原型：cyan-100 设备 / blue-50 线性 / violet-50 面积）
+_TYPE_CHIP = {
+    "equipment": ("设", "#CFFAFE", "#0E7490"),
+    "linear": ("线", "#EFF6FF", "#2563EB"),
+    "area": ("面", "#F5F3FF", "#7C3AED"),
+}
+_TYPE_CHIP_FALLBACK = ("对", "#F1F5F9", "#475569")
 
 
 class _BindingWorker(QThread):
@@ -148,131 +81,360 @@ class _ClassifyWorker(QThread):
             self.failed.emit(f"{e}\n{traceback.format_exc()}")
 
 
+class _CandidateCard(QFrame):
+    """单条候选卡片（原型 1:1）：
+
+    [32px 类型徽标] [标题 …… 置信度徽标]
+                    块名：… · 图层：… · 图纸：…
+                    建议绑定：<b>…</b>   [定位][忽略][确认]
+    ACCEPTED → emerald 单行「✓ 已确认并写入 BOQ · 数量已更新」；
+    REJECTED → 灰色单行「该候选已忽略」+ 恢复待审。
+    """
+
+    def __init__(self, candidate, eo, boq_item, sheet_name: str, status: str,
+                 on_confirm, on_reject, on_locate, on_restore=None, parent=None):
+        super().__init__(parent)
+        self.candidate_id = candidate.id
+        self._status = status
+        self._apply_status_style(candidate.confidence)
+
+        body = QHBoxLayout(self)
+        body.setContentsMargins(12, 10, 12, 10)
+        body.setSpacing(8)
+
+        # 左：32px 类型徽标
+        chip_txt, chip_bg, chip_fg = _TYPE_CHIP.get(
+            getattr(eo, "object_type", ""), _TYPE_CHIP_FALLBACK)
+        glyph = QLabel(chip_txt)
+        glyph.setFixedSize(32, 32)
+        glyph.setAlignment(Qt.AlignCenter)
+        glyph.setStyleSheet(
+            f"background:{chip_bg}; color:{chip_fg}; border-radius:6px;"
+            f"font-size:13px; font-weight:{T.FONT_WEIGHT_SEMIBOLD};")
+        body.addWidget(glyph, 0, Qt.AlignTop)
+
+        # 右：标题/元信息/底部操作行
+        col = QVBoxLayout()
+        col.setSpacing(3)
+
+        title_row = QHBoxLayout()
+        title_row.setSpacing(6)
+        name = eo.block_name if (eo is not None and eo.block_name) else \
+            (eo.layer_name if eo is not None else f"EO#{candidate.engineering_object_id}")
+        title = QLabel(str(name))
+        title.setStyleSheet(
+            f"color:{T.TEXT_PRIMARY}; font-size:12px;"
+            f"font-weight:{T.FONT_WEIGHT_BOLD};")
+        title_row.addWidget(title, 1)
+        if status == "PENDING":
+            conf = QLabel(f"置信度 {candidate.confidence:.0%}")
+            conf.setStyleSheet(self._conf_qss(candidate.confidence))
+            title_row.addWidget(conf, 0, Qt.AlignTop)
+        col.addLayout(title_row)
+
+        if status == "ACCEPTED":
+            done_row = QHBoxLayout()
+            done_row.setSpacing(6)
+            done = QLabel("✓ 已确认并写入 BOQ")
+            done.setStyleSheet(
+                f"color:{T.SUCCESS_TEXT}; font-size:12px;"
+                f"font-weight:{T.FONT_WEIGHT_SEMIBOLD};")
+            done_row.addWidget(done)
+            done_row.addStretch(1)
+            sync = QLabel("数量已更新")
+            sync.setStyleSheet(
+                f"color:{T.SUCCESS_BG}; font-size:{T.FONT_SIZE_CAPTION}px;")
+            done_row.addWidget(sync)
+            col.addLayout(done_row)
+        else:
+            if status == "REJECTED":
+                done = QLabel("该候选已忽略")
+                done.setStyleSheet(
+                    f"color:{T.TEXT_SECONDARY}; font-size:12px;")
+                col.addWidget(done)
+
+        method = METHOD_LABELS.get(candidate.method, candidate.method)
+        info_parts = []
+        if eo is not None and eo.block_name:
+            info_parts.append(f"块名：{eo.block_name}")
+        if eo is not None:
+            info_parts.append(f"图层：{eo.layer_name or '-'}")
+        info_parts.append(f"方式：{method}")
+        if sheet_name:
+            info_parts.append(f"图纸：{sheet_name}")
+        lbl_info = QLabel(" · ".join(info_parts))
+        lbl_info.setStyleSheet(
+            f"color:{T.TEXT_SECONDARY}; font-size:{T.FONT_SIZE_CAPTION}px;")
+        col.addWidget(lbl_info)
+
+        # 底部行：建议绑定 + 行内操作（ACCEPTED 用 emerald 提示替代绑定行）
+        bottom = QHBoxLayout()
+        bottom.setSpacing(4)
+        if status == "PENDING":
+            if boq_item is not None:
+                bind = QLabel(
+                    f"建议绑定：<b style='color:{T.TEXT_PRIMARY};'>"
+                    f"{boq_item.code} {boq_item.description}</b>")
+            else:
+                bind = QLabel(f"BOQ#{candidate.boq_item_id}（已删除）")
+            bind.setTextFormat(Qt.RichText)
+            bind.setStyleSheet(
+                f"color:{T.TEXT_SECONDARY}; font-size:{T.FONT_SIZE_CAPTION}px;")
+            bottom.addWidget(bind, 1)
+
+            if eo is not None:
+                btn_loc = self._make_link_btn("定位", "在画布中定位该候选实体（支持跨图纸）")
+                btn_loc.clicked.connect(
+                    lambda _=False: on_locate(
+                        eo.sheet_id, eo.block_name or eo.layer_name or ""))
+                bottom.addWidget(btn_loc)
+            btn_no = QPushButton("忽略")
+            btn_no.setObjectName("cardGhostBtn")
+            btn_no.setToolTip("拒绝该候选，不再推荐此组合")
+            btn_no.clicked.connect(lambda _=False: on_reject(candidate.id))
+            bottom.addWidget(btn_no)
+            btn_ok = QPushButton("确认")
+            btn_ok.setObjectName("cardPrimaryBtn")
+            btn_ok.setToolTip("确认该候选为正式映射，BOQ 数量同步更新")
+            btn_ok.clicked.connect(lambda _=False: on_confirm(candidate.id))
+            bottom.addWidget(btn_ok)
+        else:
+            bottom.addStretch(1)
+            if eo is not None:
+                btn_loc = self._make_link_btn(
+                    "恢复待审" if status == "REJECTED" else "定位",
+                    "撤销忽略，重新进入待复核队列" if status == "REJECTED"
+                    else "在画布中定位该候选实体（支持跨图纸）")
+                if status == "REJECTED":
+                    btn_loc.clicked.connect(
+                        lambda _=False: on_restore(candidate.id)
+                        if on_restore else on_reject(candidate.id))
+                else:
+                    btn_loc.clicked.connect(
+                        lambda _=False: on_locate(
+                            eo.sheet_id, eo.block_name or eo.layer_name or ""))
+                bottom.addWidget(btn_loc)
+        col.addLayout(bottom)
+        body.addLayout(col, 1)
+
+    @staticmethod
+    def _make_link_btn(text: str, tip: str) -> QPushButton:
+        btn = QPushButton(text)
+        btn.setObjectName("cardLinkBtn")
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setToolTip(tip)
+        return btn
+
+    def _apply_status_style(self, confidence: float = 0.0):
+        """卡片底色：高置信候选 = 青色浅底，其余白底；确认 = emerald；忽略 = 白底。"""
+        if self._status == "PENDING" and confidence >= 0.95:
+            bg, bd = "rgba(236,254,255,0.6)", "#A5F3FC"     # cyan-50/60, cyan-200
+        elif self._status == "ACCEPTED":
+            bg, bd = "#ECFDF5", "#A7F3D0"                    # emerald-50/200
+        else:
+            bg, bd = T.SURFACE, T.BORDER                     # 白底 / slate-200
+        self.setStyleSheet(
+            f"_CandidateCard {{ background: {bg}; border: 1px solid {bd};"
+            f" border-radius: 6px; }}")
+
+    @staticmethod
+    def _conf_qss(conf: float) -> str:
+        """置信度徽标（原型：98% 青 / 86%、82% 琥珀）：≥0.95 青 / ≥0.6 琥珀 / 其余红。"""
+        if conf >= 0.95:
+            return (f"background:#CFFAFE; color:#0E7490; border-radius:4px;"
+                    f"padding:1px 6px; font-size:{T.FONT_SIZE_CAPTION}px;"
+                    f"font-weight:{T.FONT_WEIGHT_MEDIUM};")
+        if conf >= 0.6:
+            return (f"background:#FEF3C7; color:#B45309; border-radius:4px;"
+                    f"padding:1px 6px; font-size:{T.FONT_SIZE_CAPTION}px;"
+                    f"font-weight:{T.FONT_WEIGHT_MEDIUM};")
+        return (f"background:#FEE2E2; color:#B91C1C; border-radius:4px;"
+                f"padding:1px 6px; font-size:{T.FONT_SIZE_CAPTION}px;"
+                f"font-weight:{T.FONT_WEIGHT_MEDIUM};")
+
+
 class BindingWorkbench(QWidget):
     locateRequested = Signal(int, str)         # (sheet_id, block_name_or_layer_name)
     statusMessage = Signal(str)
     bindingChanged = Signal()               # 确认/拒绝后主窗口刷新计量口径
+    assignRequested = Signal()              # 底部深色按钮 → 主窗口分配已选实体
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._project_id = None
         self._objects = []                  # list[EngineeringObject]
         self._queue = []                    # list[BindingCandidate]
-        self._cand_summary: dict = {}       # {(eo_id, status): count}，_render_objects/_update_status 刷新
+        self._sheets_map: dict = {}
+        self._queue_status = "PENDING"      # 卡片过滤：PENDING / ACCEPTED / REJECTED
+        self._pending_selection = 0         # 画布已选实体数（底部按钮文案）
         self._build_ui()
 
     # ---------- UI ----------
     def _build_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(6, 6, 6, 6)
-        root.setSpacing(4)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        # 工具栏
-        bar = QHBoxLayout()
-        self.btn_extract = QPushButton("提取工程对象")
-        self.btn_extract.clicked.connect(self._on_extract)
-        self.btn_generate = QPushButton("生成候选")
-        self.btn_generate.clicked.connect(self._on_generate)
-        self.btn_generate.setToolTip(
-            "分层候选：历史确认 → 规则 → 语义召回 → LLM 精排。\n"
-            "历史确认/规则强命中的对象不消耗 LLM；LLM 后端不可用时自动降级为纯本地层。")
-        self.btn_auto = QPushButton("批量确认(规则满置信)")
-        self.btn_auto.clicked.connect(self._on_auto_confirm)
-        self.btn_llm_classify = QPushButton("LLM 补充分类")
-        self.btn_llm_classify.setToolTip("对规则/知识库未命中的低置信功能对象调用大模型补充分类（需配置 LLM）")
-        self.btn_llm_classify.clicked.connect(self._on_llm_classify)
-        self.btn_refresh = QPushButton("刷新")
-        self.btn_refresh.clicked.connect(lambda: self.load_project(self._project_id))
-        for w in (self.btn_extract, self.btn_generate,
-                  self.btn_auto, self.btn_llm_classify, self.btn_refresh):
-            bar.addWidget(w)
-        bar.addStretch(1)
-        root.addLayout(bar)
+        # ---- 头部：标题/副标题 + info 图标 + 三段切换 ----
+        head = QWidget()
+        head.setObjectName("panelHeader")
+        hv = QVBoxLayout(head)
+        hv.setContentsMargins(16, 10, 12, 10)
+        hv.setSpacing(8)
+        title_row = QHBoxLayout()
+        title_col = QVBoxLayout()
+        title_col.setSpacing(2)
+        t = QLabel("绑定工作台")
+        t.setObjectName("panelTitle")
+        title_col.addWidget(t)
+        sub = QLabel("将图纸实体关联至 BOQ 清单项")
+        sub.setObjectName("panelSub")
+        title_col.addWidget(sub)
+        title_row.addLayout(title_col, 1)
+        self.btn_info = QPushButton(T.ICONS.get("info", "i")
+                                    if T.icon_font_family() else "i")
+        self.btn_info.setObjectName("panelIconBtn")
+        self.btn_info.setToolTip(
+            "AI 识别规则：电气设备块 / 尺寸标注 / 图例。\n"
+            "候选分层：历史确认 → 规则 → 语义召回 → LLM 精排。")
+        if T.icon_font_family():
+            f = T.make_icon_font(15)
+            if f:
+                self.btn_info.setFont(f)
+        title_row.addWidget(self.btn_info)
+        hv.addLayout(title_row)
 
-        # 过滤行（大批量对象时定位用）
-        flt = QHBoxLayout()
-        flt.addWidget(QLabel("过滤:"))
-        self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("块名 / 图层 / 系统 / 图纸名…")
-        self.search_box.textChanged.connect(lambda _t: self._render_objects())
-        flt.addWidget(self.search_box, 1)
-        self.chk_only_mep = QCheckBox("只看机电")
-        self.chk_only_mep.setChecked(True)
-        self.chk_only_mep.setToolTip(
-            "默认勾选：过滤建筑/装饰背景（FURN/DTL/STAIR/DOOR/WALL 等），只显示真正的设备/管线/区域。"
-            "取消勾选可显示全部（含建筑背景）。")
-        self.chk_only_mep.toggled.connect(lambda _v: self._render_objects())
-        flt.addWidget(self.chk_only_mep)
-        self.chk_unmatched = QCheckBox("只看未匹配")
-        self.chk_unmatched.setToolTip("只显示尚无 ACCEPTED 候选（未绑定）的工程对象")
-        self.chk_unmatched.toggled.connect(lambda _v: self._render_objects())
-        flt.addWidget(self.chk_unmatched)
-        root.addLayout(flt)
+        seg_host = QWidget()
+        seg_host.setObjectName("segHost")
+        seg_row = QHBoxLayout(seg_host)
+        seg_row.setContentsMargins(2, 2, 2, 2)
+        seg_row.setSpacing(2)
+        self.seg_buttons: dict[str, QPushButton] = {}
+        for key, label in (("PENDING", "待复核"), ("ACCEPTED", "已确认"),
+                           ("REJECTED", "已忽略")):
+            btn = QPushButton(f"{label} 0")
+            btn.setObjectName("segTab")
+            btn.setCheckable(True)
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(lambda _checked, k=key: self._switch_queue_status(k))
+            self.seg_buttons[key] = btn
+            seg_row.addWidget(btn)
+        self.seg_buttons["PENDING"].setChecked(True)
+        hv.addWidget(seg_host)
+        root.addWidget(head)
 
-        # 上下分栏：工程对象 / 审核队列
-        split = QSplitter(Qt.Vertical)
+        # ---- 琥珀条：N 个 AI 候选需要复核 + 全部确认（青色链接） ----
+        self.warn_bar = QFrame()
+        self.warn_bar.setObjectName("amberBar")
+        wl = QHBoxLayout(self.warn_bar)
+        wl.setContentsMargins(16, 6, 16, 6)
+        self.warn_label = QLabel("")
+        self.warn_label.setStyleSheet(
+            f"color:{T.WARNING_BAR_TEXT}; font-size:{T.FONT_SIZE_CAPTION}px;")
+        wl.addWidget(self.warn_label)
+        wl.addStretch(1)
+        self.btn_confirm_all = QPushButton("全部确认")
+        self.btn_confirm_all.setObjectName("linkBtn")
+        self.btn_confirm_all.setCursor(Qt.PointingHandCursor)
+        self.btn_confirm_all.setToolTip(
+            "批量确认规则满置信候选；低置信/AI 候选仍需逐条复核")
+        self.btn_confirm_all.clicked.connect(self._on_auto_confirm)
+        wl.addWidget(self.btn_confirm_all)
+        root.addWidget(self.warn_bar)
 
-        top = QWidget()
-        tv = QVBoxLayout(top)
-        tv.setContentsMargins(0, 0, 0, 0)
-        tv.addWidget(QLabel("工程对象（点击行 → 下方审核其候选）"))
-        self._obj_model = _ObjectGroupModel(self)
-        self.obj_table = QTableView()
-        self.obj_table.setModel(self._obj_model)
-        self.obj_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.obj_table.setAlternatingRowColors(True)
-        self.obj_table.verticalHeader().setVisible(False)
-        self.obj_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.obj_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
-        self.obj_table.selectionModel().selectionChanged.connect(self._on_obj_selected)
-        tv.addWidget(self.obj_table)
-        split.addWidget(top)
+        # ---- 卡片滚动区 ----
+        self.cards_host = QWidget()
+        self.cards_host.setObjectName("cardsHost")
+        self.cards_lay = QVBoxLayout(self.cards_host)
+        self.cards_lay.setContentsMargins(12, 12, 12, 12)
+        self.cards_lay.setSpacing(8)
+        self.cards_lay.addStretch(1)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(self.cards_host)
+        scroll.setFrameShape(QFrame.NoFrame)
+        root.addWidget(scroll, 1)
 
-        bottom = QWidget()
-        bv = QVBoxLayout(bottom)
-        bv.setContentsMargins(0, 0, 0, 0)
-        bv.addWidget(QLabel("审核队列（AI/规则候选，确认后才写入正式映射）"))
-        self.queue_table = QTableWidget()
-        self.queue_table.setColumnCount(len(QUEUE_COLS))
-        self.queue_table.setHorizontalHeaderLabels(QUEUE_COLS)
-        self.queue_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.queue_table.setAlternatingRowColors(True)
-        self.queue_table.verticalHeader().setVisible(False)
-        self.queue_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.queue_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        bv.addWidget(self.queue_table, 1)
+        # ---- 底部：通栏深色按钮「将已选 N 个实体分配至 BOQ」 ----
+        foot = QWidget()
+        foot.setObjectName("workbenchFooter")
+        fv = QVBoxLayout(foot)
+        fv.setContentsMargins(12, 10, 12, 12)
+        self.btn_assign = QPushButton("将已选 0 个实体分配至 BOQ")
+        self.btn_assign.setObjectName("darkBtn")
+        self.btn_assign.setCursor(Qt.PointingHandCursor)
+        self.btn_assign.setToolTip("把画布中已拾取的实体分配到选中的 BOQ 清单项")
+        self.btn_assign.clicked.connect(self.assignRequested)
+        fv.addWidget(self.btn_assign)
+        root.addWidget(foot)
 
-        ops = QHBoxLayout()
-        self.btn_confirm = QPushButton("确认选中")
-        self.btn_confirm.clicked.connect(self._on_confirm)
-        self.btn_reject = QPushButton("拒绝选中")
-        self.btn_reject.clicked.connect(self._on_reject)
-        self.btn_locate = QPushButton("查看来源→定位")
-        self.btn_locate.clicked.connect(self._on_locate)
-        for w in (self.btn_confirm, self.btn_reject, self.btn_locate):
-            ops.addWidget(w)
-        ops.addStretch(1)
-        self.status_label = QLabel("未选择项目")
-        self.status_label.setStyleSheet(f"color:{T.TEXT_HINT};font-size:{T.FONT_SIZE_CAPTION}px;")
-        ops.addWidget(self.status_label)
-        bv.addLayout(ops)
-        split.addWidget(bottom)
+    def _switch_queue_status(self, status: str):
+        self._queue_status = status
+        for key, btn in self.seg_buttons.items():
+            btn.setChecked(key == status)
+        self._render_queue()
 
-        split.setSizes([260, 380])
-        root.addWidget(split, 1)
+    # ---------- 外部入口（顶栏 AI/更多 菜单调用；功能不丢） ----------
+    def extract_objects(self):
+        """提取工程对象（原工具栏「提取工程对象」）。"""
+        if self._project_id is None:
+            self.statusMessage.emit("请先新建/选择项目")
+            return
+        sheets = db.get_sheets(self._project_id)
+        total = 0
+        for s in sheets:
+            from ..engineering import extract_and_store_engineering_objects
+            res = extract_and_store_engineering_objects(self._project_id, s.id)
+            total += res["created"]
+        self.load_project(self._project_id)
+        self.bindingChanged.emit()   # 新工程对象 → 图纸列表徽标联动
+        self.statusMessage.emit(f"已提取 {total} 个工程对象（{len(sheets)} 张图纸）")
+
+    def run_generate(self):
+        """生成候选（原工具栏「生成候选」；分层：历史→规则→语义→LLM）。"""
+        if self._project_id is None:
+            self.statusMessage.emit("请先新建/选择项目")
+            return
+        if not db.get_engineering_objects(self._project_id):
+            self.statusMessage.emit("请先提取工程对象（AI 算量或更多菜单）")
+            return
+        self.statusMessage.emit("生成候选中…（历史→规则→语义→LLM 精排，规则强命中不耗 LLM）")
+        self._worker = _BindingWorker(self._project_id, True, parent=self)
+        self._worker.finished_ok.connect(self._on_generate_done)
+        self._worker.failed.connect(self._on_generate_failed)
+        self._worker.start()
+
+    def run_llm_classify(self):
+        """LLM 语义补充分类（原工具栏按钮；顶栏 AI 菜单调用）。"""
+        if self._project_id is None:
+            self.statusMessage.emit("请先新建/选择项目")
+            return
+        if not db.get_engineering_objects(self._project_id):
+            self.statusMessage.emit("请先提取工程对象")
+            return
+        self.statusMessage.emit("LLM 补充分类中…（可稍后查看结果）")
+        self._class_worker = _ClassifyWorker(self._project_id, parent=self)
+        self._class_worker.finished_ok.connect(self._on_llm_classify_done)
+        self._class_worker.failed.connect(self._on_llm_classify_failed)
+        self._class_worker.start()
+
+    def set_pending_selection(self, count: int):
+        """主窗口推送画布已选实体数 → 底部按钮文案。"""
+        self._pending_selection = count
+        self.btn_assign.setText(f"将已选 {count} 个实体分配至 BOQ")
+        self.btn_assign.setEnabled(count > 0)
+
+    def refresh_queue(self):
+        """外部数据变化后刷新（原「刷新」按钮）。"""
+        self.load_project(self._project_id)
 
     # ---------- 数据加载 ----------
     def refresh_enabled(self, has_project: bool | None = None):
-        """P1-12：按钮与上下文对齐 — 无项目时禁用全部操作按钮。
-
-        has_project 显式传入以覆盖内部 _project_id（主窗口可能已切项目
-        但本工作台尚未 load_project）；None 则用内部状态。
-        """
+        """无项目时禁用批量操作按钮（has_project 显式传入可覆盖内部状态）。"""
         ok = self._project_id is not None if has_project is None else has_project
-        for bt in (self.btn_extract, self.btn_generate, self.btn_auto,
-                   self.btn_llm_classify, self.btn_refresh,
-                   self.btn_confirm, self.btn_reject, self.btn_locate):
-            bt.setEnabled(ok)
+        self.btn_confirm_all.setEnabled(ok)
+        self.btn_assign.setEnabled(ok and self._pending_selection > 0)
 
     def load_project(self, project_id):
         self._project_id = project_id
@@ -281,152 +443,105 @@ class BindingWorkbench(QWidget):
         self._sheets_map = {s.id: s.filename for s in db.get_sheets(project_id or 0)}
         self.refresh_enabled()
         if project_id is None:
-            self._render_objects()
             self._render_queue()
-            self.status_label.setText("未选择项目")
+            self._update_status()
             return
         self._objects = db.get_engineering_objects(project_id)
-        # 大批量项目（>2000 候选）会拖死 QTableWidget；批量确认页才是主入口
-        # 默认 1000 行足够 review，状态栏显示真实总数
+        # 大批量项目（>2000 候选）会拖死 UI；待复核视图默认拉 1000 条
         self._queue = db.get_pending_candidates(project_id, limit=1000)
-        self._render_objects()
         self._render_queue()
         self._update_status()
 
-    def _render_objects(self):
-        kw = self.search_box.text().strip().lower() if hasattr(self, "search_box") else ""
-        only_mep = self.chk_only_mep.isChecked() if hasattr(self, "chk_only_mep") else False
-        only_unmatched = self.chk_unmatched.isChecked() if hasattr(self, "chk_unmatched") else False
-        # 批量预取候选状态（性能优化：替代每行 N+1 查询）
-        self._cand_summary = db.candidate_status_summary(self._project_id or 0) \
-            if self._project_id else {}
-        objs = self._objects
-        if kw:
-            objs = [e for e in objs
-                    if kw in f"{e.block_name} {e.layer_name} {e.system} "
-                       f"{self._sheets_map.get(e.sheet_id, '')}".lower()]
-        if only_mep:
-            objs = [e for e in objs if e.discipline and e.discipline != "BUILDING_BG"]
-        # 只看未匹配：过滤掉已有 ACCEPTED 候选的对象
-        if only_unmatched:
-            accepted = {eid for (eid, st) in self._cand_summary if st == "ACCEPTED"}
-            objs = [e for e in objs if e.id not in accepted]
-
-        # 按 (block_name/layer_name, system, object_type) 同名同层同系统合并
-        from collections import OrderedDict
-        groups: OrderedDict[tuple, dict] = OrderedDict()
-        for eo in objs:
-            key = (eo.block_name or eo.layer_name, eo.system or "", eo.object_type)
-            if key not in groups:
-                groups[key] = {
-                    "block_name": eo.block_name,
-                    "layer_name": eo.layer_name,
-                    "system": eo.system,
-                    "object_type": eo.object_type,
-                    "specification": eo.specification,
-                    "quantity_rule": eo.quantity_rule,
-                    "confidence": eo.confidence,
-                    "sheets": {},       # {sheet_id: entity_ids}
-                    "all_entity_ids": [],
-                    "representative": eo,  # 保留一个用于状态查询
-                }
-            g = groups[key]
-            g["sheets"][eo.sheet_id] = eo.entity_ids
-            g["all_entity_ids"].extend(eo.entity_ids)
-            # 取最高置信度
-            if eo.confidence > g["confidence"]:
-                g["confidence"] = eo.confidence
-                g["specification"] = eo.specification or g["specification"]
-                g["representative"] = eo
-
-        self._grouped = groups  # 缓存供 _on_locate 使用
-        # P2-1：虚拟模型一次性替换整表（不再逐格创建 QTableWidgetItem）
-        self._obj_model.set_rows(list(groups.items()), self._sheets_map, self._cand_summary)
-
     def _render_queue(self, filter_eoid=None):
-        self.queue_table.setRowCount(0)
-        items = {it.id: it for it in db.get_boq_items(self._project_id or 0)}
-        rows = [c for c in self._queue
-                if filter_eoid is None
-                or (isinstance(filter_eoid, set) and c.engineering_object_id in filter_eoid)
-                or (not isinstance(filter_eoid, set) and c.engineering_object_id == filter_eoid)]
-        # T7 主动学习难例挖掘：低置信优先（升序），便于优先复核难例
-        rows.sort(key=lambda c: (c.confidence, c.id))
-        self.queue_table.setRowCount(len(rows))
-        for i, c in enumerate(rows):
-            bi = items.get(c.boq_item_id)
-            vals = [
-                str(c.id),
-                bi.code if bi else str(c.boq_item_id),
-                bi.description if bi else "-",
-                METHOD_LABELS.get(c.method, c.method),
-                f"{c.confidence:.0%}",
-                c.reason or "",
-            ]
-            # 难例高亮：置信 < 0.6 标橙，< 0.4 标红
-            bg = None
-            if c.confidence < 0.4:
-                bg = T.CONFIDENCE_LOW
-            elif c.confidence < 0.6:
-                bg = T.CONFIDENCE_MID
-            for col, v in enumerate(vals):
-                it = QTableWidgetItem(str(v))
-                it.setData(Qt.UserRole, c.id)
-                if bg:
-                    it.setBackground(bg)
-                self.queue_table.setItem(i, col, it)
-            # P1-11 审批行内确认/拒绝按钮：免「先选中再点下方按钮」两步
-            self.queue_table.setCellWidget(i, len(vals), self._make_inline_ops(c.id))
+        """v3：候选卡片流（三态过滤）。数据源仍以 self._queue（PENDING）为主，
+        ACCEPTED/REJECTED 视图按需从 db 拉取。"""
+        # 清空旧卡片（保留尾部 stretch）
+        while self.cards_lay.count() > 1:
+            item = self.cards_lay.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+
+        if self._project_id is None:
+            self._add_cards_placeholder("未选择项目")
+            return
+
+        items = {it.id: it for it in db.get_boq_items(self._project_id)}
+        eo_map = {eo.id: eo for eo in self._objects}
+
+        if self._queue_status == "PENDING":
+            rows = [c for c in self._queue
+                    if filter_eoid is None
+                    or (isinstance(filter_eoid, set) and c.engineering_object_id in filter_eoid)
+                    or (not isinstance(filter_eoid, set) and c.engineering_object_id == filter_eoid)]
+            # T7 主动学习难例挖掘：低置信优先（升序），便于优先复核难例
+            rows.sort(key=lambda c: (c.confidence, c.id))
+        else:
+            rows = db.get_candidates(self._project_id, status=self._queue_status)
+            if filter_eoid is not None:
+                if isinstance(filter_eoid, set):
+                    rows = [c for c in rows if c.engineering_object_id in filter_eoid]
+                else:
+                    rows = [c for c in rows if c.engineering_object_id == filter_eoid]
+            rows.sort(key=lambda c: (-c.confidence, c.id))
+
+        total = len(rows)
+        rows = rows[:CARD_RENDER_CAP]
+        if not rows:
+            self._add_cards_placeholder(
+                {"PENDING": "暂无待复核候选 — 顶栏「AI 算量」识别后在此复核",
+                 "ACCEPTED": "暂无已确认绑定",
+                 "REJECTED": "暂无已忽略候选"}[self._queue_status])
+        for c in rows:
+            eo = eo_map.get(c.engineering_object_id) or db.get_engineering_object(
+                c.engineering_object_id)
+            card = _CandidateCard(
+                c, eo, items.get(c.boq_item_id),
+                self._sheets_map.get(getattr(eo, "sheet_id", None), ""),
+                self._queue_status,
+                on_confirm=self._do_confirm, on_reject=self._do_reject,
+                on_locate=self._locate_from_card, on_restore=self._do_restore)
+            self.cards_lay.insertWidget(self.cards_lay.count() - 1, card)
+
+        if total > CARD_RENDER_CAP:
+            self._add_cards_placeholder(
+                f"（仅显示前 {CARD_RENDER_CAP} 条 / 共 {total} 条，"
+                f"请用「全部确认」处理规则满置信部分）")
+
+    def _add_cards_placeholder(self, text: str):
+        lbl = QLabel(text)
+        lbl.setAlignment(Qt.AlignCenter)
+        lbl.setStyleSheet(f"color:{T.TEXT_DISABLED}; padding: 18px;")
+        self.cards_lay.insertWidget(self.cards_lay.count() - 1, lbl)
+
+    def _locate_from_card(self, sheet_id: int, name: str):
+        self.locateRequested.emit(sheet_id, name)
+        self.statusMessage.emit(f"定位 {name}")
 
     def _update_status(self):
+        """三段计数 + 琥珀条（原型：seg 计数 / 「14 个 AI 候选需要复核」）。"""
         if self._project_id is None:
-            self.status_label.setText("未选择项目")
+            for key, btn in self.seg_buttons.items():
+                btn.setText({"PENDING": "待复核 0", "ACCEPTED": "已确认 0",
+                             "REJECTED": "已忽略 0"}[key])
+            self.warn_bar.hide()
             return
-        summary = db.candidate_status_summary(self._project_id)
-        accepted_ids = {eid for (eid, st) in summary if st == "ACCEPTED"}
-        bound = sum(1 for eo in self._objects if eo.id in accepted_ids)
-        self._cand_summary = summary
         all_pending = db.count_candidates(self._project_id, status="PENDING")
-        rendered = len(self._queue)
-        only_mep = self.chk_only_mep.isChecked() if hasattr(self, "chk_only_mep") else False
-        extra_obj = "（已过滤建筑背景）" if only_mep else "（含建筑底图）"
-        pending_extra = ""
-        if rendered < all_pending:
-            pending_extra = f"（UI 仅显示前 {rendered} 条，用「批量确认」处理全部）"
-        self.status_label.setText(
-            f"工程对象 {len(self._objects)}{extra_obj} · 已绑定 {bound} · "
-            f"待审核 {all_pending}{pending_extra}")
+        all_accepted = db.count_candidates(self._project_id, status="ACCEPTED")
+        all_rejected = db.count_candidates(self._project_id, status="REJECTED")
+        self.seg_buttons["PENDING"].setText(f"待复核 {all_pending}")
+        self.seg_buttons["ACCEPTED"].setText(f"已确认 {all_accepted}")
+        self.seg_buttons["REJECTED"].setText(f"已忽略 {all_rejected}")
+        if all_pending:
+            self.warn_label.setText(f"⚠ {all_pending} 个 AI 候选需要复核（低置信优先）")
+            self.warn_bar.show()
+        else:
+            self.warn_bar.hide()
 
-    # ---------- 工具栏动作 ----------
-    def _on_extract(self):
-        if self._project_id is None:
-            self.statusMessage.emit("请先新建/选择项目")
-            return
-        sheets = db.get_sheets(self._project_id)
-        total = 0
-        for s in sheets:
-            res = extract_and_store_engineering_objects(self._project_id, s.id)
-            total += res["created"]
-        self.load_project(self._project_id)
-        self.statusMessage.emit(f"已提取 {total} 个工程对象（{len(sheets)} 张图纸）")
-
-    def _on_generate(self):
-        if self._project_id is None:
-            self.statusMessage.emit("请先新建/选择项目")
-            return
-        if not db.get_engineering_objects(self._project_id):
-            self.statusMessage.emit("请先「提取工程对象」")
-            return
-        self.btn_generate.setEnabled(False)
-        self.statusMessage.emit("生成候选中…（历史→规则→语义→LLM 精排，规则强命中不耗 LLM）")
-        self._worker = _BindingWorker(self._project_id, True, parent=self)
-        self._worker.finished_ok.connect(self._on_generate_done)
-        self._worker.failed.connect(self._on_generate_failed)
-        self._worker.start()
-
+    # ---------- 后台完成回调 ----------
     def _on_generate_done(self, res):
-        self.btn_generate.setEnabled(True)
         self.load_project(self._project_id)
+        self.bindingChanged.emit()   # 新 PENDING 候选 → 图纸列表徽标/计量口径联动
         st = res["stats"]
         llm_note = ""
         if st.get("llm_unavailable"):
@@ -436,34 +551,9 @@ class BindingWorkbench(QWidget):
             f"已绑定跳过 {st['skipped_bound']} / 未匹配 {st['no_match']}{llm_note}")
 
     def _on_generate_failed(self, err: str):
-        self.btn_generate.setEnabled(True)
         self.statusMessage.emit(f"候选生成失败：{err[:120]}")
 
-    def _on_auto_confirm(self):
-        if self._project_id is None:
-            return
-        res = auto_confirm_rule_candidates(self._project_id)
-        self.load_project(self._project_id)
-        self.bindingChanged.emit()
-        self.statusMessage.emit(f"批量确认完成：{res['auto_confirmed']} 条（规则满置信）")
-
-    def _on_llm_classify(self):
-        """LLM 语义补充分类（T4 第3层接线）：后台跑低置信对象分类，不阻塞 UI。"""
-        if self._project_id is None:
-            self.statusMessage.emit("请先新建/选择项目")
-            return
-        if not db.get_engineering_objects(self._project_id):
-            self.statusMessage.emit("请先「提取工程对象」")
-            return
-        self.btn_llm_classify.setEnabled(False)
-        self.statusMessage.emit("LLM 补充分类中…（可稍后查看结果）")
-        self._class_worker = _ClassifyWorker(self._project_id, parent=self)
-        self._class_worker.finished_ok.connect(self._on_llm_classify_done)
-        self._class_worker.failed.connect(self._on_llm_classify_failed)
-        self._class_worker.start()
-
     def _on_llm_classify_done(self, res):
-        self.btn_llm_classify.setEnabled(True)
         self.load_project(self._project_id)
         self.statusMessage.emit(
             f"LLM 补充分类完成：成功 {res.get('classified', 0)} / 失败 "
@@ -471,60 +561,9 @@ class BindingWorkbench(QWidget):
             f"{'（另外 ' + str(res.get('deferred', 0)) + ' 个低置信对象待下次）' if res.get('deferred') else ''}")
 
     def _on_llm_classify_failed(self, err: str):
-        self.btn_llm_classify.setEnabled(True)
         self.statusMessage.emit(f"LLM 补充分类失败：{err[:120]}")
 
     # ---------- 行操作 ----------
-    def _selected_group_key(self):
-        """当前对象表选中行的分组 key（模型 UserRole，兼容 QTableView）"""
-        idx = self.obj_table.currentIndex()
-        if not idx.isValid():
-            return None
-        return idx.siblingAtColumn(0).data(Qt.UserRole)
-
-    def _on_obj_selected(self):
-        key = self._selected_group_key()
-        if key is None:
-            return
-        # 过滤审核队列：只显示该分组下所有 EO 的候选
-        grouped = getattr(self, "_grouped", {})
-        g = grouped.get(key)
-        if g is None:
-            return
-        eids_in_group = {eo.id for sheet_eids in g["sheets"].values()
-                         for eo in [r for r in self._objects
-                                    if r.sheet_id in g["sheets"]
-                                    and (r.block_name or r.layer_name) == g["block_name"]
-                                    and (r.system or "") == g["system"]
-                                    and r.object_type == g["object_type"]]}
-        self._render_queue(filter_eoid=eids_in_group if eids_in_group else None)
-
-    def _selected_candidate(self):
-        row = self.queue_table.currentRow()
-        if row < 0:
-            return None
-        it = self.queue_table.item(row, 0)
-        cid = int(it.data(Qt.UserRole))
-        return db.get_candidate(cid)
-
-    def _make_inline_ops(self, candidate_id: int) -> QWidget:
-        """P1-11：候选行内直接「确认 / 拒绝」，免去选中行再点下方按钮。"""
-        w = QWidget()
-        lay = QHBoxLayout(w)
-        lay.setContentsMargins(2, 2, 2, 2)
-        lay.setSpacing(4)
-        ok = QPushButton("✓ 确认")
-        ok.setObjectName("primaryBtn")
-        ok.setToolTip("确认该候选为正式映射")
-        ok.clicked.connect(lambda _=False, cid=candidate_id: self._do_confirm(cid))
-        no = QPushButton("✗ 拒绝")
-        no.setObjectName("dangerBtn")
-        no.setToolTip("拒绝该候选，不再推荐此组合")
-        no.clicked.connect(lambda _=False, cid=candidate_id: self._do_reject(cid))
-        lay.addWidget(ok)
-        lay.addWidget(no)
-        return w
-
     def _do_confirm(self, candidate_id: int):
         try:
             res = confirm_binding(self._project_id, candidate_id)
@@ -537,55 +576,27 @@ class BindingWorkbench(QWidget):
             f"已确认 BOQ#{res['boq_item_id']}（{res['mapping_mode']} 映射），"
             f"数量 {res['qty']:g}")
 
-    def _on_confirm(self):
-        c = self._selected_candidate()
-        if c is None:
-            self.statusMessage.emit("请先在审核队列选中一条候选")
-            return
-        self._do_confirm(c.id)
-
     def _do_reject(self, candidate_id: int):
         reject_binding(candidate_id, "人工拒绝")
         self.load_project(self._project_id)
         self.bindingChanged.emit()
-        self.statusMessage.emit(f"已拒绝候选 #{candidate_id}，不再推荐该组合")
+        self.statusMessage.emit(f"已忽略候选 #{candidate_id}，不再推荐该组合")
 
-    def _on_reject(self):
-        c = self._selected_candidate()
-        if c is None:
-            self.statusMessage.emit("请先在审核队列选中一条候选")
+    def _do_restore(self, candidate_id: int):
+        """已忽略 → 恢复待审（撤销 reject_binding）。"""
+        try:
+            db.update_candidate_status(candidate_id, "PENDING")
+        except Exception as e:  # noqa: BLE001
+            self.statusMessage.emit(f"恢复失败：{e}")
             return
-        self._do_reject(c.id)
+        self.load_project(self._project_id)
+        self.bindingChanged.emit()
+        self.statusMessage.emit(f"候选 #{candidate_id} 已恢复为待复核")
 
-    def _on_locate(self):
-        """定位当前选中对象/候选到画布（同图例标定效果，支持跨图纸）"""
+    def _on_auto_confirm(self):
         if self._project_id is None:
             return
-        # 优先定位审核队列选中候选的工程对象
-        c = self._selected_candidate()
-        if c is not None:
-            eo = db.get_engineering_object(c.engineering_object_id)
-            if eo and eo.sheet_id:
-                self.locateRequested.emit(eo.sheet_id, eo.block_name or eo.layer_name or "")
-                self.statusMessage.emit(f"定位 {eo.block_name or eo.layer_name}")
-                return
-        # 否则定位对象表选中的分组
-        key = self._selected_group_key()
-        if key is None:
-            self.statusMessage.emit("请先选中工程对象或候选")
-            return
-        grouped = getattr(self, "_grouped", {})
-        g = grouped.get(key)
-        if g is None:
-            self.statusMessage.emit("未找到分组数据")
-            return
-        first_sheet_id = next(iter(g["sheets"]), None)
-        if not first_sheet_id:
-            self.statusMessage.emit("该对象无可定位实体（无溯源锚点）")
-            return
-        total = len(g["all_entity_ids"])
-        sheet_count = len(g["sheets"])
-        self.locateRequested.emit(first_sheet_id, g["block_name"] or g["layer_name"] or "")
-        self.statusMessage.emit(
-            f"定位 {g['block_name'] or g['layer_name']}："
-            f"{total} 个实体（{sheet_count} 张图纸，当前定位到 {self._sheets_map.get(first_sheet_id, '')}）")
+        res = auto_confirm_rule_candidates(self._project_id)
+        self.load_project(self._project_id)
+        self.bindingChanged.emit()
+        self.statusMessage.emit(f"批量确认完成：{res['auto_confirmed']} 条（规则满置信）")
