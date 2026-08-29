@@ -1141,6 +1141,7 @@ def summarize_materials(project_id: int,
     args = list(sheet_ids)
 
     # ---- 设备：按块名计数（INSERT 实体） ----
+    # 过滤匿名块（* 开头，如 *U2184）和空名块
     devices = []
     with get_conn() as conn:
         rows = conn.execute(
@@ -1151,6 +1152,7 @@ def summarize_materials(project_id: int,
                    MIN(layer) AS layer
             FROM entity
             WHERE sheet_id IN ({marks}) AND dxf_type='INSERT' AND block_name<>''
+              AND block_name NOT LIKE '*%'
             GROUP BY block_name
             ORDER BY qty DESC, block_name
             """,
@@ -1211,10 +1213,13 @@ def collect_blocks(project_id: int, sheet_id: int | None = None) -> list:
 
     - sheet_id=None：聚合该项目下所有图纸（跨图纸按块名求和）
     - sheet_id 给定：只聚合该单张图纸实际出现的块（sheet_count 恒为 1）
+
+    过滤匿名块（* 开头，如 *U2184）和空名块。
     """
     if sheet_id is not None:
         rows = distinct_blocks(sheet_id)
-        out = [(b, c, 1) for b, c in rows]
+        # 过滤匿名块（* 开头）和空名块
+        out = [(b, c, 1) for b, c in rows if b and not b.startswith("*")]
         return sorted(out, key=lambda x: (x[0].lower(), x[0]))
     sheets = get_sheets(project_id)
     agg: dict = {}
@@ -1222,6 +1227,9 @@ def collect_blocks(project_id: int, sheet_id: int | None = None) -> list:
     for s in sheets:
         rows = distinct_blocks(s.id)
         for bname, cnt in rows:
+            # 过滤匿名块（* 开头）和空名块
+            if not bname or bname.startswith("*"):
+                continue
             agg[bname] = agg.get(bname, 0) + cnt
             sheet_hit[bname] = sheet_hit.get(bname, 0) + 1
     out = [(b, agg[b], sheet_hit[b]) for b in agg]

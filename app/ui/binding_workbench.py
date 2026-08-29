@@ -192,22 +192,24 @@ class _CandidateCard(QFrame):
                 f"color:{T.TEXT_SECONDARY}; font-size:{T.FONT_SIZE_CAPTION}px;")
             bottom.addWidget(bind, 1)
 
+            # 按钮行：使用更紧凑的布局
+            btn_row = QHBoxLayout()
+            btn_row.setSpacing(2)
+            btn_row.setContentsMargins(0, 0, 0, 0)
+
             if eo is not None:
-                btn_loc = self._make_link_btn("定位", "在画布中定位该候选实体（支持跨图纸）")
+                btn_loc = self._make_compact_btn("定位", "在画布中定位该候选实体")
                 btn_loc.clicked.connect(
                     lambda _=False: on_locate(
                         eo.sheet_id, eo.block_name or eo.layer_name or ""))
-                bottom.addWidget(btn_loc)
-            btn_no = QPushButton("忽略")
-            btn_no.setObjectName("cardGhostBtn")
-            btn_no.setToolTip("拒绝该候选，不再推荐此组合")
+                btn_row.addWidget(btn_loc)
+            btn_no = self._make_compact_btn("忽略", "拒绝该候选")
             btn_no.clicked.connect(lambda _=False: on_reject(candidate.id))
-            bottom.addWidget(btn_no)
-            btn_ok = QPushButton("确认")
-            btn_ok.setObjectName("cardPrimaryBtn")
-            btn_ok.setToolTip("确认该候选为正式映射，BOQ 数量同步更新")
+            btn_row.addWidget(btn_no)
+            btn_ok = self._make_primary_btn("确认", "确认该候选为正式映射")
             btn_ok.clicked.connect(lambda _=False: on_confirm(candidate.id))
-            bottom.addWidget(btn_ok)
+            btn_row.addWidget(btn_ok)
+            bottom.addLayout(btn_row)
         else:
             bottom.addStretch(1)
             if eo is not None:
@@ -233,6 +235,57 @@ class _CandidateCard(QFrame):
         btn.setObjectName("cardLinkBtn")
         btn.setCursor(Qt.PointingHandCursor)
         btn.setToolTip(tip)
+        return btn
+
+    @staticmethod
+    def _make_compact_btn(text: str, tip: str) -> QPushButton:
+        """创建紧凑型按钮（适配窄面板）"""
+        btn = QPushButton(text)
+        btn.setObjectName("compactBtn")
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setToolTip(tip)
+        btn.setMinimumWidth(45)
+        btn.setMaximumWidth(60)
+        btn.setStyleSheet("""
+            QPushButton {
+                background: #F8FAFC;
+                border: 1px solid #E2E8F0;
+                border-radius: 4px;
+                padding: 3px 6px;
+                font-size: 11px;
+                color: #475569;
+            }
+            QPushButton:hover {
+                background: #F1F5F9;
+                border-color: #CBD5E1;
+            }
+        """)
+        return btn
+
+    @staticmethod
+    def _make_primary_btn(text: str, tip: str) -> QPushButton:
+        """创建主要操作按钮（青色背景）"""
+        btn = QPushButton(text)
+        btn.setObjectName("primaryActionBtn")
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setToolTip(tip)
+        btn.setMinimumWidth(45)
+        btn.setMaximumWidth(60)
+        btn.setStyleSheet("""
+            QPushButton {
+                background: #0891B2;
+                border: 1px solid #0891B2;
+                border-radius: 4px;
+                padding: 3px 6px;
+                font-size: 11px;
+                color: #FFFFFF;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background: #0E7490;
+                border-color: #0E7490;
+            }
+        """)
         return btn
 
     def _apply_status_style(self, confidence: float = 0.0):
@@ -372,7 +425,7 @@ class BindingWorkbench(QWidget):
         foot.setObjectName("workbenchFooter")
         fv = QVBoxLayout(foot)
         fv.setContentsMargins(12, 10, 12, 12)
-        self.btn_assign = QPushButton("将已选 0 个实体分配至 BOQ")
+        self.btn_assign = QPushButton("分配至 BOQ")
         self.btn_assign.setObjectName("darkBtn")
         self.btn_assign.setCursor(Qt.PointingHandCursor)
         self.btn_assign.setToolTip("把画布中已拾取的实体分配到选中的 BOQ 清单项")
@@ -440,7 +493,10 @@ class BindingWorkbench(QWidget):
     def set_pending_selection(self, count: int):
         """主窗口推送画布已选实体数 → 底部按钮文案。"""
         self._pending_selection = count
-        self.btn_assign.setText(f"将已选 {count} 个实体分配至 BOQ")
+        if count > 0:
+            self.btn_assign.setText(f"分配 ({count})")
+        else:
+            self.btn_assign.setText("分配至 BOQ")
         self.btn_assign.setEnabled(count > 0)
 
     def refresh_queue(self):

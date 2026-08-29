@@ -389,20 +389,37 @@ class LegendPanel(QWidget):
 
     def _visible_rows(self) -> list:
         rows = self._rows
+
+        # 1. 过滤匿名块（* 开头，如 *U2184）和空名块
+        rows = [r for r in rows if r.get("block_name") and not r["block_name"].startswith("*")]
+
+        # 2. 底图减法过滤
         if self._base_subtraction and self._base_hidden_blocks:
             rows = [r for r in rows if r["block_name"] not in self._base_hidden_blocks]
+
+        # 3. 隐藏建筑块（类别为"建筑"或"建筑背景"等）
         if self._hide_building:
-            rows = [r for r in rows if (r.get("category") or "").strip() != "建筑"]
+            building_categories = {"建筑", "建筑背景", "建筑构件", "结构"}
+            rows = [r for r in rows
+                    if (r.get("category") or "").strip() not in building_categories]
+
+        # 4. 仅看未标定
         if self._only_unconfirmed:
             rows = [r for r in rows if not r.get("confirmed")]
+
+        # 5. 图层筛选
         if self._layer_filter:
             rows = [r for r in rows
                     if self._layer_filter in self._block_layers.get(r["block_name"], set())]
+
+        # 6. 关键字搜索（扩展搜索范围）
         if self._search_filter:
             kw = self._search_filter.lower()
+            search_fields = ("block_name", "category", "device_type", "spec", "unit", "count_rule")
             rows = [r for r in rows if any(
                 kw in str(r.get(k) or "").lower()
-                for k in ("block_name", "category", "device_type", "spec"))]
+                for k in search_fields)]
+
         return rows
 
     def _on_hide_building_toggle(self, checked: bool):
@@ -411,8 +428,9 @@ class LegendPanel(QWidget):
         self._update_status()
 
     def _hidden_building_count(self) -> int:
+        building_categories = {"建筑", "建筑背景", "建筑构件", "结构"}
         return sum(1 for r in self._rows
-                   if (r.get("category") or "").strip() == "建筑")
+                   if (r.get("category") or "").strip() in building_categories)
 
     def _render(self):
         self._loading = True

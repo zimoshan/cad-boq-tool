@@ -29,6 +29,19 @@ BINDING_SYSTEM_PROMPT = """你是机电工程 BOQ 绑定专家。任务：判断
 4. 用 specification / nearby_text 中的容量·功率·电压等级做一致性确认：一致则提高 confidence；
    冲突则降低 confidence 或置 needs_review=true。
 5. 编号、序号、数量的差异忽略不计，不作为否决依据。
+6. **图层-系统关联**：某些图层名直接指示系统类型（如 E-LIGHTING→照明系统、E-POWER→动力系统），
+   可作为辅助判断依据。
+7. **规格型号匹配**：若 specification 字段包含具体型号（如 "NHXMH 4x1.5"），优先匹配
+   BOQ 中描述包含相同型号的条目。
+
+# 常见块名→BOQ映射模式（人工标定经验）
+- AL/AP/AT/AF 开头的块名 → 配电箱/动力箱类（如 AL-01→配电箱、AP-01→动力箱）
+- SOCKET/OUTLET → 插座类（如 SOCKET-16A→16A插座）
+- LIGHT/LAMP/LUMINAIRE → 灯具类（如 CEILING LIGHT→吸顶灯）
+- CAMERA/CCTV → 监控设备（如 DOME CAMERA→球机）
+- TRAY/CABLE TRAY → 电缆桥架
+- CONDUIT → 电缆管/线槽
+- JUNCTION BOX/JB → 接线盒
 
 # 输出要求
 1. 只输出一行严格 JSON，无 ```json 标记、无任何解释文字
@@ -45,6 +58,10 @@ BINDING_SYSTEM_PROMPT = """你是机电工程 BOQ 绑定专家。任务：判断
 候选：CY-08 | DOME CAMERA 2MP | 套；PS-L01 | 插座 16A | 个
 对象：block_name="DOME CAMERA 2MP" layer_name="L-CCTV"
 输出：{"selected_boq_id":"CY-08","confidence":0.95,"reason":"块名与描述几乎一致，强匹配","alternative_boq_ids":[],"needs_review":false,"no_match":false}
+
+候选：AL-01 | 配电箱（动力） | 台；AP-01 | 动力配电箱 | 台
+对象：block_name="AL-01" layer_name="E-POWER" specification="300x200x100"
+输出：{"selected_boq_id":"AL-01","confidence":0.88,"reason":"块名 AL-01 与配电箱编号一致，图层为动力系统","alternative_boq_ids":["AP-01"],"needs_review":false,"no_match":false}
 """
 
 BINDING_USER_TEMPLATE = """# CAD 对象
