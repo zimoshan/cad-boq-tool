@@ -1,0 +1,72 @@
+# 无头模式跑「门禁审计」（通用模板）
+# 用途：可读 .claude/quality-gates.md，逐条探测验证命令是否可执行、
+#       领域门禁能否静态核验，输出 {lint,type,test,domain,verdict} 报告。
+#       这里只读不执行——因为内核不允许硬编码任何项目的门禁命令，
+#       窄权限集下「执行门禁」必然自相矛盾。
+# 真实跑验证命令请用本地 /verify；若一定要在 CI 执行，按项目把门禁命令
+# 加进 --allowedTools（如 Bash(pytest:*) Bash(ruff:*)），改后本模板即失效，
+# 需要按你项目的实际门禁表同步维护。
+# 前置：仓库 Secret 配置 ANTHROPIC_API_KEY。
+#
+# 三个护栏（缺一会导致 CI 挂死或超支）：
+#   1. --allowedTools 必须是窄集。写 Bash(gh pr list) 而不是 Bash，
+#      否则无头模式会卡在权限确认上直到超时。
+#   2. --max-budget-usd 硬顶，防止单次运行超支。
+#   3. 外层 timeout 兜底，防止进程挂住占满 runner 时长。
+
+name: Claude Gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15          # 护栏 3：外层兜底
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # 只读审计：读 quality-gates.md，command -v 探测每条命令可执行性；
+      # 领域门禁做静态/只读检查。不执行验证命令本体（见文件头注释）。
+      - name: Audit quality gates via Claude Code (headless, read-only)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          timeout 600 claude -p \
+            --output-format json \
+            --max-turns 10 \
+            --max-budget-usd 1.00 \
+            --allowedTools "Bash(command -v:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob" \
+            "读取 .claude/quality-gates.md，做只读门禁审计（不执行任何验证命令）：
+             1. 解析「验证命令」表与「领域门禁」清单；
+             2. 对每条命令用 command -v 探测是否可执行，缺失的标 NOT_AVAILABLE；
+             3. 领域门禁逐条判断能否静态核验（脚本是否仍在、有无时间戳/实测数等僵尸特征），
+                无法静态核验的标 UNVERIFIED，提示走本地 /verify；
+             4. 输出 JSON：{lint:{configured,available}, type:{...}, test:{...},
+                domain:[{name,status}], verdict: RUN|WARN|UNCONFIGURED}。
+             任一关键项失败 verdict=WARN 并列出失败项。
+             门禁表缺失时报 {verdict:'UNCONFIGURED'}，不要自行编造命令。"
+
+      # ── 扩展：要在 CI 实际跑测试时，把验证命令加进 --allowedTools 并改这句：
+      #   --allowedTools "Bash(pytest:*),Bash(ruff:*),Bash(command -v:*),Bash(gh pr diff:*),Read,Grep,Glob" \
+      #   "读取 .claude/quality-gates.md，逐条执行验证命令与领域门禁，输出
+      #    JSON：{lint, type, test, domain:[{name,pass}], verdict}，任一失败 verdict=FAIL。"
+
+# ── 变体：定时巡检（每周一 09:00 UTC）──────────────────────────────
+#   on:
+#     schedule:
+#       - cron: "0 9 * * 1"
+#   提示词示例：
+#     "检查 .claude/quality-gates.md 里每条命令是否仍可执行；
+#      标出从没失败过的僵尸门禁；输出待修清单。"
+#
+#   ⚠️ 公开仓库 60 天无活动后 GitHub 会自动停用定时 workflow。

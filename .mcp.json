@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"
+      },
+      "description": "GitHub 复杂查询与探索性检索。建 PR / 查 CI / issue 操作一律用 gh CLI，不用此 server。token 必须只读最小权限。"
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"],
+      "description": "Web 化后前端联调用（图纸渲染、面板交互验证）。非前端任务时请在 /mcp 中禁用，避免常驻工具面开销。"
+    }
+  }
+}

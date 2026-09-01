@@ -1,4 +1,26 @@
 {
+  "env": {
+    "MAX_MCP_OUTPUT_TOKENS": "8000",
+    "BASH_MAX_OUTPUT_LENGTH": "20000",
+    "ENABLE_PROMPT_CACHING_1H": "1"
+  },
+  "permissions": {
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/)",
+      "Read(./node_modules/)",
+      "Read(./dist/)",
+      "Read(./build/)",
+      "Read(./coverage/)",
+      "Read(./tmp/)",
+      "Read(./logs/)",
+      "Read(./__pycache__/)",
+      "Read(./.venv/)",
+      "Read(./venv/)",
+      "Read(./.git/)"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {
@@ -16,6 +38,26 @@
           {
             "type": "command",
             "command": "C:/Users/Solomon/.local/bin/graphify.EXE hook-guard read"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/filter-test-output.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "test -f .claude/quality-gates.md && exit 0; command -v pytest >/dev/null 2>&1 || exit 0; { pytest -q 2>&1; echo \"__EXIT_CODE__=$?\"; } | grep -E 'FAIL|ERROR|__EXIT_CODE__=' | head -100"
           }
         ]
       }
