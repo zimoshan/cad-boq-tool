@@ -155,7 +155,7 @@ def import_folder(
             progress_cb(done, len(files), f"直读 {len(ezdwg_ok)} 张 / 需转换 {len(need_oda)} 张", "convert")
 
         # ezdwg 可读的直接作为 dxf_path（parse_dxf 内部按扩展名自动选 backend）
-        for f, src in ezdwg_ok:
+        for _f, src in ezdwg_ok:
             dxf_map[src] = src
 
         # ODA 批量转换
