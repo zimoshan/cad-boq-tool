@@ -1,0 +1,37 @@
+# Pinned runtime dependencies (pyporject.toml is authoritative; this file is for pip fallback)
+# 2026-09-06 Web 化 Phase 0 - 业务层算法保留 + 集成层重写
+
+# Web framework
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.9
+
+# Data + ORM
+SQLAlchemy[asyncio]==2.0.32
+asyncpg==0.29.0
+psycopg[binary]==3.2.1
+alembic==1.13.2
+GeoAlchemy2==0.15.2
+
+# Data model + config
+pydantic==2.8.2
+pydantic-settings==2.4.0
+python-dotenv==1.0.1
+
+# Auth (RuoYi-style RBAC)
+casbin==1.36.1
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
+
+# CAD parsing
+ezdxf==1.4.4
+ezdwg==0.5.0
+shapely==2.0.4
+
+# Excel + LLM
+openpyxl==3.1.5
+ollama==0.3.3
+openai==1.45.0
+
+# Utility
+pyarrow==16.1.0
