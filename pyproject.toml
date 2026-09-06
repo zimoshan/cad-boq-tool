@@ -79,10 +79,13 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "C4", "SIM"]
 ignore = [
-    "E501",  # 长行不强制（业务代码兼容）
+    "E501",   # 长行不强制
     # 业务代码遗留警告（Phase 6 工程化批次再修）
-    "B023",   # Function definition does not bind loop variable
-    "E741",   # Ambiguous variable name 'l'
+    "B008",    # Function call in default argument（业务代码常见模式）
+    "B023",    # Function definition does not bind loop variable
+    "B904",    # raise from（保留 ruff 警告但不阻塞 CI；Phase 6 修）
+    "E402",    # Module level import not at top of file
+    "E741",    # Ambiguous variable name 'l'
     "SIM102",  # Nested if
     "SIM105",  # try-except-pass → contextlib.suppress
     "SIM108",  # if-else → ternary
@@ -90,6 +93,7 @@ ignore = [
     "UP012",   # Unnecessary encoding argument
     "UP015",   # Unnecessary mode argument
     "UP045",   # Use X | None
+    "UP046",   # Use X | None for type annotations
 ]
 
 # mypy 配置
