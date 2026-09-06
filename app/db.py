@@ -1,6 +1,8 @@
 """SQLite 数据层"""
+
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -9,9 +11,7 @@ import threading
 import time
 
 from .config import DB_PATH
-from .models import (Project, Sheet, Entity, BoqItem, Mapping,
-                     EngineeringObject, BindingCandidate, LlmRun,
-                     SymbolLibrary)
+from .models import BindingCandidate, BoqItem, EngineeringObject, Entity, LlmRun, Mapping, Project, Sheet, SymbolLibrary
 
 logger = logging.getLogger(__name__)
 
@@ -23,10 +23,8 @@ def _close_thread_conn() -> None:
     """关闭当前线程持有的连接（测试/退出时调用，避免句柄泄漏）。"""
     conn = getattr(_thread_local, "conn", None)
     if conn is not None:
-        try:
+        with contextlib.suppress(Exception):
             conn.close()
-        except Exception:
-            pass
         _thread_local.conn = None
 
 
@@ -256,7 +254,7 @@ def _open_db() -> sqlite3.Connection:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=5000")
         # 性能优化：大缓存 + 内存映射 I/O（1.5GB 数据库需要更大缓存）
-        conn.execute("PRAGMA cache_size = -65536")   # 256MB 页缓存（默认仅 8MB）
+        conn.execute("PRAGMA cache_size = -65536")  # 256MB 页缓存（默认仅 8MB）
         conn.execute("PRAGMA mmap_size = 268435456")  # 256MB 内存映射
         if attempt == 1:
             try:
@@ -292,16 +290,18 @@ def db_usage() -> dict:
     """
     sz = os.path.getsize(str(DB_PATH)) if os.path.exists(str(DB_PATH)) else 0
     if not sz:
-        return {"file_bytes": 0, "free_pages": 0, "freelist_bytes": 0,
-                "waste_ratio": 0.0, "exists": False}
+        return {"file_bytes": 0, "free_pages": 0, "freelist_bytes": 0, "waste_ratio": 0.0, "exists": False}
     with get_conn() as conn:
         page_size = conn.execute("PRAGMA page_size").fetchone()[0]
         free_pages = conn.execute("PRAGMA freelist_count").fetchone()[0]
     freelist_bytes = page_size * free_pages
-    return {"file_bytes": sz, "free_pages": free_pages,
-            "freelist_bytes": freelist_bytes,
-            "waste_ratio": freelist_bytes / sz if sz else 0.0,
-            "exists": True}
+    return {
+        "file_bytes": sz,
+        "free_pages": free_pages,
+        "freelist_bytes": freelist_bytes,
+        "waste_ratio": freelist_bytes / sz if sz else 0.0,
+        "exists": True,
+    }
 
 
 def vacuum_database() -> dict:
@@ -320,9 +320,12 @@ def vacuum_database() -> dict:
     finally:
         conn.close()
     after = db_usage()["file_bytes"]
-    return {"before_bytes": before, "after_bytes": after,
-            "freed_bytes": max(0, before - after),
-            "duration_ms": round((time.perf_counter() - t0) * 1000)}
+    return {
+        "before_bytes": before,
+        "after_bytes": after,
+        "freed_bytes": max(0, before - after),
+        "duration_ms": round((time.perf_counter() - t0) * 1000),
+    }
 
 
 def get_conn() -> sqlite3.Connection:
@@ -360,10 +363,18 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE sheet ADD COLUMN is_base INTEGER DEFAULT 0")
     # v2.0 §2.2 B2：boq_item 缺 6 字段补
     boq_cols = {r[1] for r in conn.execute("PRAGMA table_info(boq_item)").fetchall()}
-    for col, default in [("section", "''"), ("item_key", "''"), ("brand", "''"),
-                          ("bill_qty", "0"), ("installed_qty", "0"), ("qty_remaining", "0")]:
+    for col, default in [
+        ("section", "''"),
+        ("item_key", "''"),
+        ("brand", "''"),
+        ("bill_qty", "0"),
+        ("installed_qty", "0"),
+        ("qty_remaining", "0"),
+    ]:
         if col not in boq_cols:
-            conn.execute(f"ALTER TABLE boq_item ADD COLUMN {col} {('TEXT' if col in ('section','item_key','brand') else 'REAL')} DEFAULT {default}")
+            conn.execute(
+                f"ALTER TABLE boq_item ADD COLUMN {col} {('TEXT' if col in ('section', 'item_key', 'brand') else 'REAL')} DEFAULT {default}"
+            )
     # P4 v1.0 §2.5：补 writeback_audit 表（旧 SQLite schema 没包含）
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
     if "writeback_audit" not in tables:
@@ -394,12 +405,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "output_text" not in lrcols:
         conn.execute("ALTER TABLE llm_run ADD COLUMN output_text TEXT DEFAULT ''")
     # P2-4：binding_candidate 复合索引（项目×对象 / 项目×对象×状态）——旧库增量补齐
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_bc_proj_eo "
-        "ON binding_candidate(project_id, engineering_object_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_bc_proj_eo ON binding_candidate(project_id, engineering_object_id)")
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_bc_proj_eo_status "
-        "ON binding_candidate(project_id, engineering_object_id, status)")
+        "ON binding_candidate(project_id, engineering_object_id, status)"
+    )
 
 
 def _now() -> str:
@@ -409,15 +419,20 @@ def _now() -> str:
 # ---------- 项目 ----------
 def create_project(name: str) -> int:
     with get_conn() as conn:
-        cur = conn.execute(
-            "INSERT INTO project(name, created_at) VALUES(?,?)", (name, _now()))
+        cur = conn.execute("INSERT INTO project(name, created_at) VALUES(?,?)", (name, _now()))
         pid = cur.lastrowid
         # 初始化项目级配置行（V2 任务二十八）
         conn.execute(
             "INSERT OR IGNORE INTO project_config(project_id, layer_rules, block_rules, meta, updated_at) "
             "VALUES(?,?,?,?,?)",
-            (pid, json.dumps(_DEFAULT_LAYER_RULES), json.dumps(_DEFAULT_BLOCK_RULES),
-             json.dumps(_DEFAULT_META), _now()))
+            (
+                pid,
+                json.dumps(_DEFAULT_LAYER_RULES),
+                json.dumps(_DEFAULT_BLOCK_RULES),
+                json.dumps(_DEFAULT_META),
+                _now(),
+            ),
+        )
         return pid
 
 
@@ -449,13 +464,24 @@ def update_project_boq(pid: int, boq_path: str) -> None:
 # ===========================================================================
 _LLM_SETTINGS_ALLOWED = {
     "active_backend",
-    "ollama_host", "ollama_model",
-    "dashscope_api_key", "dashscope_model",
-    "openai_api_key", "openai_model",
-    "deepseek_api_key", "deepseek_model",
-    "custom_base_url", "custom_api_key", "custom_model", "custom_embedding_model",
-    "fallback_enabled", "fallback_backend", "quality_threshold",
-    "temperature", "timeout", "max_tokens",
+    "ollama_host",
+    "ollama_model",
+    "dashscope_api_key",
+    "dashscope_model",
+    "openai_api_key",
+    "openai_model",
+    "deepseek_api_key",
+    "deepseek_model",
+    "custom_base_url",
+    "custom_api_key",
+    "custom_model",
+    "custom_embedding_model",
+    "fallback_enabled",
+    "fallback_backend",
+    "quality_threshold",
+    "temperature",
+    "timeout",
+    "max_tokens",
 }
 
 
@@ -491,7 +517,8 @@ def set_llm_settings(**fields) -> None:
             v = fields[k]
             if k == "fallback_enabled":
                 v = int(bool(v))
-            sets.append(f"{k}=?"); args.append(v)
+            sets.append(f"{k}=?")
+            args.append(v)
     if not sets:
         return
     sets.append("updated_at=?")
@@ -554,9 +581,8 @@ def get_project_config(project_id: int) -> dict:
     """
     with get_conn() as conn:
         r = conn.execute(
-            "SELECT layer_rules, block_rules, meta, updated_at "
-            "FROM project_config WHERE project_id=?",
-            (project_id,)).fetchone()
+            "SELECT layer_rules, block_rules, meta, updated_at FROM project_config WHERE project_id=?", (project_id,)
+        ).fetchone()
     if not r:
         return {
             "layer_rules": dict(_DEFAULT_LAYER_RULES),
@@ -587,32 +613,34 @@ def set_project_config(project_id: int, **fields) -> None:
     自动 upsert config 行（兼容旧项目）。
     """
     with get_conn() as conn:
-        conn.execute("INSERT OR IGNORE INTO project_config(project_id) VALUES(?)",
-                     (project_id,))
+        conn.execute("INSERT OR IGNORE INTO project_config(project_id) VALUES(?)", (project_id,))
         if "layer_rules" in fields:
             conn.execute(
                 "UPDATE project_config SET layer_rules=?, updated_at=? WHERE project_id=?",
-                (json.dumps(fields["layer_rules"], ensure_ascii=False), _now(), project_id))
+                (json.dumps(fields["layer_rules"], ensure_ascii=False), _now(), project_id),
+            )
         if "block_rules" in fields:
             conn.execute(
                 "UPDATE project_config SET block_rules=?, updated_at=? WHERE project_id=?",
-                (json.dumps(fields["block_rules"], ensure_ascii=False), _now(), project_id))
+                (json.dumps(fields["block_rules"], ensure_ascii=False), _now(), project_id),
+            )
         if "meta" in fields:
             conn.execute(
                 "UPDATE project_config SET meta=?, updated_at=? WHERE project_id=?",
-                (json.dumps(fields["meta"], ensure_ascii=False), _now(), project_id))
+                (json.dumps(fields["meta"], ensure_ascii=False), _now(), project_id),
+            )
 
 
 def import_project_config(project_id: int, config_dict: dict) -> None:
     """从 JSON 字典整体导入配置（覆盖式）。用于跨项目复用模板。"""
     with get_conn() as conn:
-        conn.execute("INSERT OR IGNORE INTO project_config(project_id) VALUES(?)",
-                     (project_id,))
+        conn.execute("INSERT OR IGNORE INTO project_config(project_id) VALUES(?)", (project_id,))
         for k in ("layer_rules", "block_rules", "meta"):
             if k in config_dict:
                 conn.execute(
                     f"UPDATE project_config SET {k}=?, updated_at=? WHERE project_id=?",
-                    (json.dumps(config_dict[k], ensure_ascii=False), _now(), project_id))
+                    (json.dumps(config_dict[k], ensure_ascii=False), _now(), project_id),
+                )
 
 
 def export_project_config(project_id: int) -> dict:
@@ -642,15 +670,23 @@ def delete_project(pid: int) -> None:
 
 
 # ---------- 图纸 ----------
-def add_sheet(project_id: int, filename: str, src_path: str, dxf_path: str = "",
-              status: str = "ready", scale: float = 1.0,
-              entity_count: int = 0, layer_count: int = 0,
-              blocks_json: str = "") -> int:
+def add_sheet(
+    project_id: int,
+    filename: str,
+    src_path: str,
+    dxf_path: str = "",
+    status: str = "ready",
+    scale: float = 1.0,
+    entity_count: int = 0,
+    layer_count: int = 0,
+    blocks_json: str = "",
+) -> int:
     with get_conn() as conn:
         cur = conn.execute(
             "INSERT INTO sheet(project_id, filename, src_path, dxf_path, status, scale, entity_count, layer_count, blocks_json) "
             "VALUES(?,?,?,?,?,?,?,?,?)",
-            (project_id, filename, src_path, dxf_path, status, scale, entity_count, layer_count, blocks_json))
+            (project_id, filename, src_path, dxf_path, status, scale, entity_count, layer_count, blocks_json),
+        )
         return cur.lastrowid
 
 
@@ -662,12 +698,13 @@ def update_sheet_blocks(sid: int, blocks_json: str) -> None:
     <BLOCK_GEOMETRY_DIR>/<sha256>.parquet，sheet.blocks_json 字段存 sha256 引用。
     旧格式（直接 JSON 字符串）保持原样存储，向后兼容。
     """
+    import json
+
     from .cad.block_geometry_store import (
         is_blocks_ref,
         serialize_sheet_blocks_ref,
         write_block_geometry,
     )
-    import json
 
     if not blocks_json:
         with get_conn() as conn:
@@ -699,13 +736,11 @@ def update_sheet_blocks(sid: int, blocks_json: str) -> None:
         conn.execute("UPDATE sheet SET blocks_json=? WHERE id=?", (blocks_json, sid))
 
 
-def update_sheet_parse(sid: int, dxf_path: str, entity_count: int,
-                       layer_count: int, blocks_json: str) -> None:
+def update_sheet_parse(sid: int, dxf_path: str, entity_count: int, layer_count: int, blocks_json: str) -> None:
     """批量重解析后一次性回写：DXF 路径 + 统计 + 块几何缓存 + 状态（单事务）"""
     with get_conn() as conn:
         conn.execute(
-            "UPDATE sheet SET dxf_path=?, entity_count=?, layer_count=?, "
-            "blocks_json=?, status='ready' WHERE id=?",
+            "UPDATE sheet SET dxf_path=?, entity_count=?, layer_count=?, blocks_json=?, status='ready' WHERE id=?",
             (dxf_path, entity_count, layer_count, blocks_json, sid),
         )
 
@@ -720,9 +755,11 @@ def update_sheet_status(sid: int, status: str, entity_count: int = None, layer_c
     with get_conn() as conn:
         sets, args = ["status=?"], [status]
         if entity_count is not None:
-            sets.append("entity_count=?"); args.append(entity_count)
+            sets.append("entity_count=?")
+            args.append(entity_count)
         if layer_count is not None:
-            sets.append("layer_count=?"); args.append(layer_count)
+            sets.append("layer_count=?")
+            args.append(layer_count)
         args.append(sid)
         conn.execute(f"UPDATE sheet SET {', '.join(sets)} WHERE id=?", args)
 
@@ -753,15 +790,14 @@ def delete_sheets(sids: list[int]) -> None:
 # ---------- 建筑底图 ----------
 # 图层减法原理：机电图图层集合 - 底图图层集合 = 纯设备/管线图层
 # 每个项目只允许一张底图（设新底图时自动取消旧的）
-_BASE_LAYER_EXCLUDE = {"0", ""}   # layer 0 / 空名不参与减法（AutoCAD 惯例 + 避免误隐藏直接实体）
+_BASE_LAYER_EXCLUDE = {"0", ""}  # layer 0 / 空名不参与减法（AutoCAD 惯例 + 避免误隐藏直接实体）
 
 
 def set_base_sheet(project_id: int, sheet_id: int) -> None:
     """设定某张图纸为项目底图（先清除旧底图标记，再标记新的）。"""
     with get_conn() as conn:
         conn.execute("UPDATE sheet SET is_base=0 WHERE project_id=?", (project_id,))
-        conn.execute("UPDATE sheet SET is_base=1 WHERE id=? AND project_id=?",
-                     (sheet_id, project_id))
+        conn.execute("UPDATE sheet SET is_base=1 WHERE id=? AND project_id=?", (sheet_id, project_id))
 
 
 def clear_base_sheet(project_id: int) -> None:
@@ -773,9 +809,7 @@ def clear_base_sheet(project_id: int) -> None:
 def get_base_sheet(project_id: int) -> Sheet | None:
     """返回该项目的底图 Sheet（仅一张），无则 None。"""
     with get_conn() as conn:
-        r = conn.execute(
-            "SELECT * FROM sheet WHERE project_id=? AND is_base=1 LIMIT 1",
-            (project_id,)).fetchone()
+        r = conn.execute("SELECT * FROM sheet WHERE project_id=? AND is_base=1 LIMIT 1", (project_id,)).fetchone()
     return Sheet(**dict(r)) if r else None
 
 
@@ -787,8 +821,7 @@ def get_base_layers(project_id: int) -> set:
     if base is None:
         return set()
     rows = distinct_layers(base.id)
-    return {name for name, _cnt in rows
-            if name not in _BASE_LAYER_EXCLUDE}
+    return {name for name, _cnt in rows if name not in _BASE_LAYER_EXCLUDE}
 
 
 def get_base_blocks(project_id: int) -> set:
@@ -807,9 +840,8 @@ def get_block_insert_layers(sheet_id: int) -> dict:
     """
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT block_name, layer FROM entity "
-            "WHERE sheet_id=? AND block_name!='' AND layer!='' ",
-            (sheet_id,)).fetchall()
+            "SELECT block_name, layer FROM entity WHERE sheet_id=? AND block_name!='' AND layer!='' ", (sheet_id,)
+        ).fetchall()
     out: dict[str, set] = {}
     for r in rows:
         bn = r["block_name"]
@@ -862,32 +894,56 @@ def replace_entities(sheet_id: int, entities: list) -> None:
             min_x, min_y, max_x, max_y = _bbox_split(e.bbox)
             wkt = _bbox_to_wkt(e.bbox)
             # SQLite 模式：geometry 列存 WKT 字符串；PG 模式：可被 ST_GeomFromText 解析
-            rows.append((
-                sheet_id, e.handle, e.dxf_type, e.layer, e.block_name,
-                min_x, min_y, max_x, max_y,  # B4 新增 4 列
-                wkt,                            # B4 新增 geometry (WKT)
-                e.geom_json, e.length, e.area,
-                json.dumps(list(e.color)),
-            ))
+            rows.append(
+                (
+                    sheet_id,
+                    e.handle,
+                    e.dxf_type,
+                    e.layer,
+                    e.block_name,
+                    min_x,
+                    min_y,
+                    max_x,
+                    max_y,  # B4 新增 4 列
+                    wkt,  # B4 新增 geometry (WKT)
+                    e.geom_json,
+                    e.length,
+                    e.area,
+                    json.dumps(list(e.color)),
+                )
+            )
         try:
             conn.executemany(
                 "INSERT INTO entity(sheet_id, handle, dxf_type, layer, block_name, "
                 "min_x, min_y, max_x, max_y, geometry, "
                 "geom_json, length, area, color) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                rows,
+            )
         except Exception:
             # 兼容旧 SQLite schema（无 min_x..max_y/geometry 列）→ 回退原 10 列 INSERT
             conn.executemany("DELETE FROM entity WHERE sheet_id=?", (sheet_id,))
             legacy_rows = []
             for e in entities:
-                legacy_rows.append((
-                    sheet_id, e.handle, e.dxf_type, e.layer, e.block_name,
-                    json.dumps(e.bbox), e.geom_json, e.length, e.area,
-                    json.dumps(list(e.color)),
-                ))
+                legacy_rows.append(
+                    (
+                        sheet_id,
+                        e.handle,
+                        e.dxf_type,
+                        e.layer,
+                        e.block_name,
+                        json.dumps(e.bbox),
+                        e.geom_json,
+                        e.length,
+                        e.area,
+                        json.dumps(list(e.color)),
+                    )
+                )
             conn.executemany(
                 "INSERT INTO entity(sheet_id, handle, dxf_type, layer, block_name, bbox, geom_json, length, area, color) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?)", legacy_rows)
+                "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                legacy_rows,
+            )
 
 
 def get_entities(sheet_id: int, layer: str = None, block: str = None, limit: int = 200000) -> list:
@@ -911,9 +967,14 @@ def get_entities(sheet_id: int, layer: str = None, block: str = None, limit: int
         e.bbox = tuple(json.loads(r["bbox"])) if r["bbox"] else (0, 0, 0, 0)
         e.color = tuple(json.loads(r["color"])) if r["color"] else (255, 255, 255)
         out.append(e)
-    logger.debug("db get_entities: sheet_id=%s rows=%d limit=%d query_ms=%.1f parse_ms=%.1f",
-                 sheet_id, len(out), limit, query_elapsed * 1000,
-                 (time.perf_counter() - parse_started) * 1000)
+    logger.debug(
+        "db get_entities: sheet_id=%s rows=%d limit=%d query_ms=%.1f parse_ms=%.1f",
+        sheet_id,
+        len(out),
+        limit,
+        query_elapsed * 1000,
+        (time.perf_counter() - parse_started) * 1000,
+    )
     return out
 
 
@@ -934,10 +995,15 @@ def distinct_layers(sheet_id: int) -> list:
         rows = conn.execute(
             "SELECT layer, COUNT(*) c FROM entity WHERE sheet_id=? AND layer!='' "
             "GROUP BY layer ORDER BY layer COLLATE NOCASE ASC",
-            (sheet_id,)).fetchall()
+            (sheet_id,),
+        ).fetchall()
     result = [(r[0], r[1]) for r in rows]
-    logger.debug("db distinct_layers: sheet_id=%s rows=%d elapsed_ms=%.1f",
-                 sheet_id, len(result), (time.perf_counter() - started) * 1000)
+    logger.debug(
+        "db distinct_layers: sheet_id=%s rows=%d elapsed_ms=%.1f",
+        sheet_id,
+        len(result),
+        (time.perf_counter() - started) * 1000,
+    )
     return result
 
 
@@ -946,16 +1012,21 @@ def layer_color_map(sheet_id: int) -> dict[str, tuple]:
     started = time.perf_counter()
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT layer, color FROM entity WHERE sheet_id=? AND layer!='' AND color IS NOT NULL "
-            "GROUP BY layer", (sheet_id,)).fetchall()
+            "SELECT layer, color FROM entity WHERE sheet_id=? AND layer!='' AND color IS NOT NULL GROUP BY layer",
+            (sheet_id,),
+        ).fetchall()
     out = {}
     for r in rows:
         try:
             out[r[0]] = tuple(json.loads(r[1]))
         except Exception:
             out[r[0]] = (128, 128, 128)
-    logger.debug("db layer_color_map: sheet_id=%s rows=%d elapsed_ms=%.1f",
-                 sheet_id, len(out), (time.perf_counter() - started) * 1000)
+    logger.debug(
+        "db layer_color_map: sheet_id=%s rows=%d elapsed_ms=%.1f",
+        sheet_id,
+        len(out),
+        (time.perf_counter() - started) * 1000,
+    )
     return out
 
 
@@ -964,10 +1035,16 @@ def distinct_blocks(sheet_id: int) -> list:
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT block_name, COUNT(*) c FROM entity WHERE sheet_id=? AND block_name!='' "
-            "GROUP BY block_name ORDER BY block_name COLLATE NOCASE ASC", (sheet_id,)).fetchall()
+            "GROUP BY block_name ORDER BY block_name COLLATE NOCASE ASC",
+            (sheet_id,),
+        ).fetchall()
     result = [(r[0], r[1]) for r in rows]
-    logger.debug("db distinct_blocks: sheet_id=%s rows=%d elapsed_ms=%.1f",
-                 sheet_id, len(result), (time.perf_counter() - started) * 1000)
+    logger.debug(
+        "db distinct_blocks: sheet_id=%s rows=%d elapsed_ms=%.1f",
+        sheet_id,
+        len(result),
+        (time.perf_counter() - started) * 1000,
+    )
     return result
 
 
@@ -975,9 +1052,7 @@ def distinct_blocks(sheet_id: int) -> list:
 def get_entity_ids_by_layer(sheet_id: int, layer: str) -> list[int]:
     """只返回指定图层的实体 ID，不做 JSON 反序列化（O(N) 不可避免但常数小）"""
     with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT id FROM entity WHERE sheet_id=? AND layer=?",
-            (sheet_id, layer)).fetchall()
+        rows = conn.execute("SELECT id FROM entity WHERE sheet_id=? AND layer=?", (sheet_id, layer)).fetchall()
     return [r["id"] for r in rows]
 
 
@@ -985,8 +1060,8 @@ def get_entity_ids_by_block(sheet_id: int, block_name: str) -> list[int]:
     """只返回指定块名的实体 ID"""
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT id FROM entity WHERE sheet_id=? AND block_name=?",
-            (sheet_id, block_name)).fetchall()
+            "SELECT id FROM entity WHERE sheet_id=? AND block_name=?", (sheet_id, block_name)
+        ).fetchall()
     return [r["id"] for r in rows]
 
 
@@ -997,12 +1072,12 @@ def get_entities_by_ids(sheet_id: int, entity_ids: list[int]) -> list:
     # SQLite 参数占位符上限约 999，超过时分批
     out = []
     for i in range(0, len(entity_ids), 900):
-        chunk = entity_ids[i:i+900]
+        chunk = entity_ids[i : i + 900]
         placeholders = ",".join("?" * len(chunk))
         with get_conn() as conn:
             rows = conn.execute(
-                f"SELECT * FROM entity WHERE sheet_id=? AND id IN ({placeholders})",
-                [sheet_id] + chunk).fetchall()
+                f"SELECT * FROM entity WHERE sheet_id=? AND id IN ({placeholders})", [sheet_id] + chunk
+            ).fetchall()
         for r in rows:
             e = Entity(**{k: r[k] for k in r.keys() if k not in ("bbox", "color")})
             e.bbox = tuple(json.loads(r["bbox"])) if r["bbox"] else (0, 0, 0, 0)
@@ -1016,12 +1091,27 @@ def replace_boq_items(project_id: int, items: list) -> None:
     """整段替换 BOQ 条目（会删除旧条目 + 关联 mapping）"""
     with get_conn() as conn:
         conn.execute("DELETE FROM boq_item WHERE project_id=?", (project_id,))
-        conn.execute("DELETE FROM mapping WHERE boq_item_id NOT IN (SELECT id FROM boq_item WHERE project_id=?)", (project_id,))
+        conn.execute(
+            "DELETE FROM mapping WHERE boq_item_id NOT IN (SELECT id FROM boq_item WHERE project_id=?)", (project_id,)
+        )
         conn.executemany(
             "INSERT INTO boq_item(project_id, row_index, code, description, unit, original_qty, rule_type, scale_factor, measured_qty) "
             "VALUES(?,?,?,?,?,?,?,?,?)",
-            [(project_id, it.row_index, it.code, it.description, it.unit, it.original_qty,
-              it.rule_type, it.scale_factor, getattr(it, "measured_qty", 0) or 0) for it in items])
+            [
+                (
+                    project_id,
+                    it.row_index,
+                    it.code,
+                    it.description,
+                    it.unit,
+                    it.original_qty,
+                    it.rule_type,
+                    it.scale_factor,
+                    getattr(it, "measured_qty", 0) or 0,
+                )
+                for it in items
+            ],
+        )
     _invalidate_boq_embedding(project_id)
 
 
@@ -1031,16 +1121,23 @@ def reparse_boq(project_id: int) -> dict:
     返回 {"removed": N, "fixed_cols": N}。
     """
     import re
-    CONTRACT_CUES = ("Contractor", "Quantities are taken", "Qty remaining",
-                     "Material status", "Brand", "Item descriptions",
-                     "Rates are to include", "Overhead, profit",
-                     "design drawings form part of this Bill")
-    HEADER_CODES = {"item", "no", "code", "section", "description",
-                    "rate usd", "amount usd"}
+
+    CONTRACT_CUES = (
+        "Contractor",
+        "Quantities are taken",
+        "Qty remaining",
+        "Material status",
+        "Brand",
+        "Item descriptions",
+        "Rates are to include",
+        "Overhead, profit",
+        "design drawings form part of this Bill",
+    )
+    HEADER_CODES = {"item", "no", "code", "section", "description", "rate usd", "amount usd"}
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT id, code, description, unit FROM boq_item WHERE project_id=? ORDER BY id",
-            (project_id,)).fetchall()
+            "SELECT id, code, description, unit FROM boq_item WHERE project_id=? ORDER BY id", (project_id,)
+        ).fetchall()
         removed = fixed = 0
         for r in rows:
             code = (r["code"] or "").strip()
@@ -1070,16 +1167,12 @@ def reparse_boq(project_id: int) -> dict:
             full = " ".join(filter(None, [code, desc, unit]))
             if full and len(full) >= 100 and any(c in full for c in CONTRACT_CUES):
                 conn.execute("DELETE FROM boq_item WHERE id=?", (r["id"],))
-                conn.execute(
-                    "DELETE FROM mapping WHERE boq_item_id=?",
-                    (r["id"],))
+                conn.execute("DELETE FROM mapping WHERE boq_item_id=?", (r["id"],))
                 removed += 1
                 continue
             # 2) 列位号形态自愈：desc 短且 unit 含大写型号
             if unit and desc and len(desc) < 30 and re.search(r"[A-Z0-9._-]{4,}", unit):
-                conn.execute(
-                    "UPDATE boq_item SET description=?, unit=? WHERE id=?",
-                    (unit, desc, r["id"]))
+                conn.execute("UPDATE boq_item SET description=?, unit=? WHERE id=?", (unit, desc, r["id"]))
                 fixed += 1
         conn.commit()
     if removed or fixed:
@@ -1096,8 +1189,21 @@ def append_boq_items(project_id: int, items: list) -> int:
         conn.executemany(
             "INSERT INTO boq_item(project_id, row_index, code, description, unit, original_qty, rule_type, scale_factor, measured_qty) "
             "VALUES(?,?,?,?,?,?,?,?,?)",
-            [(project_id, it.row_index, it.code, it.description, it.unit, it.original_qty,
-              it.rule_type, it.scale_factor, getattr(it, "measured_qty", 0) or 0) for it in items])
+            [
+                (
+                    project_id,
+                    it.row_index,
+                    it.code,
+                    it.description,
+                    it.unit,
+                    it.original_qty,
+                    it.rule_type,
+                    it.scale_factor,
+                    getattr(it, "measured_qty", 0) or 0,
+                )
+                for it in items
+            ],
+        )
     _invalidate_boq_embedding(project_id)
     return len(items)
 
@@ -1106,6 +1212,7 @@ def _invalidate_boq_embedding(project_id: int) -> None:
     """BOQ 变更后使 embedding 向量缓存失效（延迟导入避免循环依赖）。"""
     try:
         from .binding.embedding_matcher import invalidate_embedding_cache
+
         invalidate_embedding_cache(project_id)
     except Exception:
         pass
@@ -1117,17 +1224,22 @@ def get_boq_items(project_id: int) -> list:
     return [BoqItem(**dict(r)) for r in rows]
 
 
-def update_boq_item(item_id: int, rule_type: str = None, scale_factor: float = None,
-                    unit: str = None, measured_qty: float = None) -> None:
+def update_boq_item(
+    item_id: int, rule_type: str = None, scale_factor: float = None, unit: str = None, measured_qty: float = None
+) -> None:
     sets, args = [], []
     if rule_type is not None:
-        sets.append("rule_type=?"); args.append(rule_type)
+        sets.append("rule_type=?")
+        args.append(rule_type)
     if scale_factor is not None:
-        sets.append("scale_factor=?"); args.append(scale_factor)
+        sets.append("scale_factor=?")
+        args.append(scale_factor)
     if unit is not None:
-        sets.append("unit=?"); args.append(unit)
+        sets.append("unit=?")
+        args.append(unit)
     if measured_qty is not None:
-        sets.append("measured_qty=?"); args.append(measured_qty)
+        sets.append("measured_qty=?")
+        args.append(measured_qty)
     if not sets:
         return
     args.append(item_id)
@@ -1136,20 +1248,23 @@ def update_boq_item(item_id: int, rule_type: str = None, scale_factor: float = N
 
 
 # ---------- 映射 ----------
-def add_mapping(boq_item_id: int, sheet_id: int, mode: str,
-                entity_id: int = None, layer_name: str = "", block_name: str = "") -> int:
+def add_mapping(
+    boq_item_id: int, sheet_id: int, mode: str, entity_id: int = None, layer_name: str = "", block_name: str = ""
+) -> int:
     with get_conn() as conn:
         cur = conn.execute(
             "INSERT INTO mapping(boq_item_id, sheet_id, mode, entity_id, layer_name, block_name, created_at) "
             "VALUES(?,?,?,?,?,?,?)",
-            (boq_item_id, sheet_id, mode, entity_id, layer_name, block_name, _now()))
+            (boq_item_id, sheet_id, mode, entity_id, layer_name, block_name, _now()),
+        )
         return cur.lastrowid
 
 
 def entity_mapped(sheet_id: int, entity_id: int) -> bool:
     with get_conn() as conn:
         r = conn.execute(
-            "SELECT 1 FROM mapping WHERE sheet_id=? AND entity_id=? LIMIT 1", (sheet_id, entity_id)).fetchone()
+            "SELECT 1 FROM mapping WHERE sheet_id=? AND entity_id=? LIMIT 1", (sheet_id, entity_id)
+        ).fetchone()
     return r is not None
 
 
@@ -1158,9 +1273,11 @@ def get_mappings(boq_item_id: int = None, sheet_id: int = None) -> list:
     args = []
     conds = []
     if boq_item_id is not None:
-        conds.append("boq_item_id=?"); args.append(boq_item_id)
+        conds.append("boq_item_id=?")
+        args.append(boq_item_id)
     if sheet_id is not None:
-        conds.append("sheet_id=?"); args.append(sheet_id)
+        conds.append("sheet_id=?")
+        args.append(sheet_id)
     if conds:
         sql += " WHERE " + " AND ".join(conds)
     sql += " ORDER BY id"
@@ -1187,6 +1304,7 @@ def summarize_layers(project_id: int) -> list:
     """
     # 延迟 import 避免循环依赖（cad.reader 依赖 models）
     from .cad.reader import fix_garbled_layer_name
+
     with get_conn() as conn:
         rows = conn.execute(
             """
@@ -1194,11 +1312,12 @@ def summarize_layers(project_id: int) -> list:
             FROM entity
             WHERE sheet_id IN (SELECT id FROM sheet WHERE project_id=?)
             """,
-            (project_id,)).fetchall()
+            (project_id,),
+        ).fetchall()
     agg: dict = {}
     for r in rows:
         raw_layer = r["layer"] or ""
-        layer = fix_garbled_layer_name(raw_layer)   # 乱码归一化
+        layer = fix_garbled_layer_name(raw_layer)  # 乱码归一化
         agg.setdefault(layer, {"entity_count": 0, "blocks": set()})
         agg[layer]["entity_count"] += 1
         if r["block_name"]:
@@ -1206,12 +1325,14 @@ def summarize_layers(project_id: int) -> list:
     out = []
     for layer, v in agg.items():
         samples = sorted(v["blocks"])[:3] if v["blocks"] else []
-        out.append({
-            "layer_name": layer,
-            "entity_count": v["entity_count"],
-            "block_count": len(v["blocks"]),
-            "block_samples": samples,
-        })
+        out.append(
+            {
+                "layer_name": layer,
+                "entity_count": v["entity_count"],
+                "block_count": len(v["blocks"]),
+                "block_samples": samples,
+            }
+        )
     out.sort(key=lambda x: -x["entity_count"])
     return out
 
@@ -1228,8 +1349,7 @@ _LINEAR_TYPES = ("LINE", "LWPOLYLINE", "POLYLINE", "ARC", "SPLINE")
 WIRE_LAYER_KEYWORDS = ("LINE", "WIRE", "CABLE", "CONDUIT", "KABLO", "TRAY", "线", "导线")
 
 
-def summarize_materials(project_id: int,
-                        wire_keywords: tuple = WIRE_LAYER_KEYWORDS) -> dict:
+def summarize_materials(project_id: int, wire_keywords: tuple = WIRE_LAYER_KEYWORDS) -> dict:
     """项目级材料汇总：设备（按块计数）+ 导线（按图层长度）。
 
     统计口径（方案 A 定稿）：
@@ -1270,15 +1390,18 @@ def summarize_materials(project_id: int,
             GROUP BY block_name
             ORDER BY qty DESC, block_name
             """,
-            args).fetchall()
+            args,
+        ).fetchall()
     for r in rows:
-        devices.append({
-            "block_name": r["block_name"],
-            "qty": r["qty"],
-            "sheet_count": r["sheet_count"],
-            "layer": r["layer"] or "",
-            "spec": "",          # 由调用方补全（block_legend / 规格推断）
-        })
+        devices.append(
+            {
+                "block_name": r["block_name"],
+                "qty": r["qty"],
+                "sheet_count": r["sheet_count"],
+                "layer": r["layer"] or "",
+                "spec": "",  # 由调用方补全（block_legend / 规格推断）
+            }
+        )
 
     # ---- 导线：linear 桶 ∪ 层名关键词，Σ length×scale ----
     cfg = get_project_config(project_id)
@@ -1297,7 +1420,8 @@ def summarize_materials(project_id: int,
               AND e.dxf_type IN ('LINE','LWPOLYLINE','POLYLINE','ARC','SPLINE')
             GROUP BY e.layer
             """,
-            args).fetchall()
+            args,
+        ).fetchall()
     linear_upper = {str(l).upper() for l in linear_layers}
     wires = []
     seen_layers = set()
@@ -1311,12 +1435,14 @@ def summarize_materials(project_id: int,
         if layer in seen_layers:
             continue
         seen_layers.add(layer)
-        wires.append({
-            "layer_name": layer,
-            "entity_count": r["entity_count"],
-            "sheet_count": r["sheet_count"],
-            "length_raw": round(r["length_raw"] or 0.0, 4),
-        })
+        wires.append(
+            {
+                "layer_name": layer,
+                "entity_count": r["entity_count"],
+                "sheet_count": r["sheet_count"],
+                "length_raw": round(r["length_raw"] or 0.0, 4),
+            }
+        )
     wires.sort(key=lambda x: -x["length_raw"])
     return {"devices": devices, "wires": wires}
 
@@ -1354,8 +1480,8 @@ def get_block_legend(project_id: int) -> list:
     """返回该项目的图例标定列表（list[dict]）"""
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT * FROM block_legend WHERE project_id=? ORDER BY block_name",
-            (project_id,)).fetchall()
+            "SELECT * FROM block_legend WHERE project_id=? ORDER BY block_name", (project_id,)
+        ).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -1372,20 +1498,28 @@ def save_block_legend(row: dict) -> None:
             "(project_id, block_name, category, device_type, spec, unit, count_rule, "
             " confirmed, source, note, created_at) "
             "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-            (row["project_id"], row["block_name"],
-             row.get("category", ""), row.get("device_type", ""),
-             row.get("spec", ""), row.get("unit", "个"),
-             row.get("count_rule", "count"),
-             int(bool(row.get("confirmed", 0))),
-             row.get("source", "manual"), row.get("note", ""),
-             row.get("created_at") or _now()))
+            (
+                row["project_id"],
+                row["block_name"],
+                row.get("category", ""),
+                row.get("device_type", ""),
+                row.get("spec", ""),
+                row.get("unit", "个"),
+                row.get("count_rule", "count"),
+                int(bool(row.get("confirmed", 0))),
+                row.get("source", "manual"),
+                row.get("note", ""),
+                row.get("created_at") or _now(),
+            ),
+        )
 
 
 def set_block_confirmed(project_id: int, block_name: str, confirmed: bool) -> None:
     with get_conn() as conn:
         conn.execute(
             "UPDATE block_legend SET confirmed=? WHERE project_id=? AND block_name=?",
-            (int(bool(confirmed)), project_id, block_name))
+            (int(bool(confirmed)), project_id, block_name),
+        )
 
 
 def delete_block_legend(project_id: int, block_name: str = None) -> None:
@@ -1393,20 +1527,30 @@ def delete_block_legend(project_id: int, block_name: str = None) -> None:
         if block_name is None:
             conn.execute("DELETE FROM block_legend WHERE project_id=?", (project_id,))
         else:
-            conn.execute(
-                "DELETE FROM block_legend WHERE project_id=? AND block_name=?",
-                (project_id, block_name))
+            conn.execute("DELETE FROM block_legend WHERE project_id=? AND block_name=?", (project_id, block_name))
 
 
 # ===========================================================================
 # V2：工程对象（engineering_object）
 # ===========================================================================
-def create_engineering_object(project_id: int, sheet_id: int = 0, object_type: str = "",
-                              discipline: str = "", system: str = "", subsystem: str = "",
-                              block_name: str = "", layer_name: str = "", tag: str = "",
-                              specification: str = "", material: str = "", unit: str = "",
-                              quantity_rule: str = "count", confidence: float = 0.0,
-                              source: str = "", entity_ids: list = None) -> int:
+def create_engineering_object(
+    project_id: int,
+    sheet_id: int = 0,
+    object_type: str = "",
+    discipline: str = "",
+    system: str = "",
+    subsystem: str = "",
+    block_name: str = "",
+    layer_name: str = "",
+    tag: str = "",
+    specification: str = "",
+    material: str = "",
+    unit: str = "",
+    quantity_rule: str = "count",
+    confidence: float = 0.0,
+    source: str = "",
+    entity_ids: list = None,
+) -> int:
     """新建工程对象，返回 id。entity_ids 为溯源锚点（实体 id 列表，JSON 存储）"""
     now = _now()
     with get_conn() as conn:
@@ -1416,9 +1560,27 @@ def create_engineering_object(project_id: int, sheet_id: int = 0, object_type: s
             " layer_name, tag, specification, material, unit, quantity_rule, confidence, "
             " source, entity_ids, created_at, updated_at) "
             "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (project_id, sheet_id, object_type, discipline, system, subsystem, block_name,
-             layer_name, tag, specification, material, unit, quantity_rule, confidence,
-             source, json.dumps(entity_ids or []), now, now))
+            (
+                project_id,
+                sheet_id,
+                object_type,
+                discipline,
+                system,
+                subsystem,
+                block_name,
+                layer_name,
+                tag,
+                specification,
+                material,
+                unit,
+                quantity_rule,
+                confidence,
+                source,
+                json.dumps(entity_ids or []),
+                now,
+                now,
+            ),
+        )
         return cur.lastrowid
 
 
@@ -1431,16 +1593,20 @@ def _eo_from_row(r) -> EngineeringObject:
     return e
 
 
-def get_engineering_objects(project_id: int, object_type: str = None,
-                            block_name: str = None, layer_name: str = None) -> list:
+def get_engineering_objects(
+    project_id: int, object_type: str = None, block_name: str = None, layer_name: str = None
+) -> list:
     sql = "SELECT * FROM engineering_object WHERE project_id=?"
     args = [project_id]
     if object_type:
-        sql += " AND object_type=?"; args.append(object_type)
+        sql += " AND object_type=?"
+        args.append(object_type)
     if block_name:
-        sql += " AND block_name=?"; args.append(block_name)
+        sql += " AND block_name=?"
+        args.append(block_name)
     if layer_name:
-        sql += " AND layer_name=?"; args.append(layer_name)
+        sql += " AND layer_name=?"
+        args.append(layer_name)
     sql += " ORDER BY COALESCE(NULLIF(block_name,''), NULLIF(layer_name,'')) COLLATE NOCASE ASC, id"
     with get_conn() as conn:
         rows = conn.execute(sql, args).fetchall()
@@ -1455,9 +1621,21 @@ def get_engineering_object(eoid: int) -> EngineeringObject | None:
 
 def update_engineering_object(eoid: int, **fields) -> None:
     """白名单字段更新；entity_ids 传 list 自动 JSON 序列化"""
-    allowed = {"object_type", "discipline", "system", "subsystem", "block_name", "layer_name",
-               "tag", "specification", "material", "unit", "quantity_rule",
-               "confidence", "source"}
+    allowed = {
+        "object_type",
+        "discipline",
+        "system",
+        "subsystem",
+        "block_name",
+        "layer_name",
+        "tag",
+        "specification",
+        "material",
+        "unit",
+        "quantity_rule",
+        "confidence",
+        "source",
+    }
     sets, args = [], []
     for k, v in fields.items():
         if k not in allowed:
@@ -1475,8 +1653,10 @@ def update_engineering_object(eoid: int, **fields) -> None:
 
 def set_eo_entity_ids(eoid: int, entity_ids: list) -> None:
     with get_conn() as conn:
-        conn.execute("UPDATE engineering_object SET entity_ids=?, updated_at=? WHERE id=?",
-                     (json.dumps(entity_ids or []), _now(), eoid))
+        conn.execute(
+            "UPDATE engineering_object SET entity_ids=?, updated_at=? WHERE id=?",
+            (json.dumps(entity_ids or []), _now(), eoid),
+        )
 
 
 def delete_engineering_object(eoid: int) -> None:
@@ -1497,10 +1677,19 @@ def _symbol_from_row(r) -> SymbolLibrary | None:
     if not r:
         return None
     return SymbolLibrary(
-        id=r[0], project_id=r[1], block_name=r[2], layer_name=r[3],
-        discipline=r[4], system=r[5], spec=r[6], unit=r[7],
-        quantity_rule=r[8], source=r[9], confirmed_by=r[10],
-        confirmed_at=r[11], updated_at=r[12],
+        id=r[0],
+        project_id=r[1],
+        block_name=r[2],
+        layer_name=r[3],
+        discipline=r[4],
+        system=r[5],
+        spec=r[6],
+        unit=r[7],
+        quantity_rule=r[8],
+        source=r[9],
+        confirmed_by=r[10],
+        confirmed_at=r[11],
+        updated_at=r[12],
     )
 
 
@@ -1509,7 +1698,8 @@ def get_symbol(project_id: int, block_name: str = "", layer_name: str = "") -> S
     with get_conn() as conn:
         r = conn.execute(
             "SELECT * FROM symbol_library WHERE project_id=? AND block_name=? AND layer_name=?",
-            (project_id, block_name or "", layer_name or "")).fetchone()
+            (project_id, block_name or "", layer_name or ""),
+        ).fetchone()
     return _symbol_from_row(r)
 
 
@@ -1529,10 +1719,18 @@ def get_symbols(project_id: int, discipline: str = "", system: str = "") -> list
     return [_symbol_from_row(r) for r in rows]
 
 
-def upsert_symbol(project_id: int, block_name: str = "", layer_name: str = "",
-                  discipline: str = "", system: str = "", spec: str = "",
-                  unit: str = "", quantity_rule: str = "", source: str = "manual",
-                  confirmed_by: str = "") -> int:
+def upsert_symbol(
+    project_id: int,
+    block_name: str = "",
+    layer_name: str = "",
+    discipline: str = "",
+    system: str = "",
+    spec: str = "",
+    unit: str = "",
+    quantity_rule: str = "",
+    source: str = "manual",
+    confirmed_by: str = "",
+) -> int:
     """写入/更新符号库条目（键=project_id+block_name+layer_name）。
 
     已存在则合并更新非空字段；返回条目 id。
@@ -1555,9 +1753,21 @@ def upsert_symbol(project_id: int, block_name: str = "", layer_name: str = "",
                  confirmed_at=COALESCE(excluded.confirmed_at, symbol_library.confirmed_at),
                  updated_at=excluded.updated_at
             """,
-            (project_id, block_name or "", layer_name or "", discipline or "", system or "",
-             spec or "", unit or "", quantity_rule or "", source, confirmed_by or "",
-             now if confirmed_by else None, now))
+            (
+                project_id,
+                block_name or "",
+                layer_name or "",
+                discipline or "",
+                system or "",
+                spec or "",
+                unit or "",
+                quantity_rule or "",
+                source,
+                confirmed_by or "",
+                now if confirmed_by else None,
+                now,
+            ),
+        )
         return cur.lastrowid
 
 
@@ -1569,18 +1779,41 @@ def delete_symbol(symbol_id: int) -> None:
 # ===========================================================================
 # V2：绑定候选（binding_candidate）—— AI/规则只写这里，人工确认才进 mapping
 # ===========================================================================
-def create_binding_candidate(project_id: int, engineering_object_id: int, boq_item_id: int,
-                             method: str = "LLM", score: float = 0.0, confidence: float = 0.0,
-                             reason: str = "", model: str = "", model_version: str = "",
-                             prompt_version: str = "", llm_run_id: int = None) -> int:
+def create_binding_candidate(
+    project_id: int,
+    engineering_object_id: int,
+    boq_item_id: int,
+    method: str = "LLM",
+    score: float = 0.0,
+    confidence: float = 0.0,
+    reason: str = "",
+    model: str = "",
+    model_version: str = "",
+    prompt_version: str = "",
+    llm_run_id: int = None,
+) -> int:
     with get_conn() as conn:
         cur = conn.execute(
             "INSERT INTO binding_candidate"
             "(project_id, engineering_object_id, boq_item_id, method, score, confidence, "
             " reason, model, model_version, prompt_version, llm_run_id, status, created_at) "
             "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (project_id, engineering_object_id, boq_item_id, method, score, confidence,
-             reason, model, model_version, prompt_version, llm_run_id, "PENDING", _now()))
+            (
+                project_id,
+                engineering_object_id,
+                boq_item_id,
+                method,
+                score,
+                confidence,
+                reason,
+                model,
+                model_version,
+                prompt_version,
+                llm_run_id,
+                "PENDING",
+                _now(),
+            ),
+        )
         return cur.lastrowid
 
 
@@ -1590,14 +1823,15 @@ def get_candidate(cid: int) -> BindingCandidate | None:
     return BindingCandidate(**dict(r)) if r else None
 
 
-def get_candidates(project_id: int, status: str = None,
-                   engineering_object_id: int = None) -> list:
+def get_candidates(project_id: int, status: str = None, engineering_object_id: int = None) -> list:
     sql = "SELECT * FROM binding_candidate WHERE project_id=?"
     args = [project_id]
     if status:
-        sql += " AND status=?"; args.append(status)
+        sql += " AND status=?"
+        args.append(status)
     if engineering_object_id is not None:
-        sql += " AND engineering_object_id=?"; args.append(engineering_object_id)
+        sql += " AND engineering_object_id=?"
+        args.append(engineering_object_id)
     sql += " ORDER BY confidence DESC, score DESC"
     with get_conn() as conn:
         rows = conn.execute(sql, args).fetchall()
@@ -1608,7 +1842,9 @@ def get_pending_candidates(project_id: int, limit: int = 200) -> list:
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT * FROM binding_candidate WHERE project_id=? AND status='PENDING' "
-            "ORDER BY confidence DESC, score DESC LIMIT ?", (project_id, limit)).fetchall()
+            "ORDER BY confidence DESC, score DESC LIMIT ?",
+            (project_id, limit),
+        ).fetchall()
     return [BindingCandidate(**dict(r)) for r in rows]
 
 
@@ -1622,7 +1858,8 @@ def candidate_status_summary(project_id: int) -> dict:
             "SELECT engineering_object_id, status, count(*) AS n "
             "FROM binding_candidate WHERE project_id=? "
             "GROUP BY engineering_object_id, status",
-            (project_id,)).fetchall()
+            (project_id,),
+        ).fetchall()
     return {(r["engineering_object_id"], r["status"]): r["n"] for r in rows}
 
 
@@ -1653,10 +1890,12 @@ def sheet_candidate_stats(project_id: int) -> dict:
             "FROM engineering_object eo "
             "LEFT JOIN binding_candidate c ON c.engineering_object_id = eo.id "
             "WHERE eo.project_id=? GROUP BY eo.sheet_id",
-            (project_id,)).fetchall()
-    return {r["sid"]: {"objects": r["objects"] or 0,
-                       "pending": r["pending"] or 0,
-                       "accepted": r["accepted"] or 0} for r in rows}
+            (project_id,),
+        ).fetchall()
+    return {
+        r["sid"]: {"objects": r["objects"] or 0, "pending": r["pending"] or 0, "accepted": r["accepted"] or 0}
+        for r in rows
+    }
 
 
 def update_candidate_status(cid: int, status: str) -> None:
@@ -1670,18 +1909,20 @@ def supersede_candidates(engineering_object_id: int, exclude_cid: int = None) ->
     with get_conn() as conn:
         if exclude_cid is None:
             conn.execute(
-                "UPDATE binding_candidate SET status='SUPERSEDED' "
-                "WHERE engineering_object_id=? AND status='PENDING'",
-                (engineering_object_id,))
+                "UPDATE binding_candidate SET status='SUPERSEDED' WHERE engineering_object_id=? AND status='PENDING'",
+                (engineering_object_id,),
+            )
         else:
             conn.execute(
                 "UPDATE binding_candidate SET status='SUPERSEDED' "
                 "WHERE engineering_object_id=? AND status='PENDING' AND id<>?",
-                (engineering_object_id, exclude_cid))
+                (engineering_object_id, exclude_cid),
+            )
 
 
-def supersede_candidates_by_anchor(project_id: int, block_name: str = "",
-                                   layer_name: str = "", exclude_cid: int = None) -> int:
+def supersede_candidates_by_anchor(
+    project_id: int, block_name: str = "", layer_name: str = "", exclude_cid: int = None
+) -> int:
     """跨图纸 supersede（2026-08-28 绑定增强 2.3.1）：同名块/同图层全部 EO 的 PENDING
     候选一次性置 SUPERSEDED。
 
@@ -1694,9 +1935,11 @@ def supersede_candidates_by_anchor(project_id: int, block_name: str = "",
     """
     conds, args = [], []
     if block_name:
-        conds.append("block_name=?"); args.append(block_name)
+        conds.append("block_name=?")
+        args.append(block_name)
     if layer_name:
-        conds.append("layer_name=?"); args.append(layer_name)
+        conds.append("layer_name=?")
+        args.append(layer_name)
     if not conds:
         return 0
     where = " OR ".join(conds)
@@ -1724,11 +1967,23 @@ def delete_candidates_for_item(boq_item_id: int) -> None:
 # ===========================================================================
 # V2：LLM 审计（llm_run）
 # ===========================================================================
-def create_llm_run(project_id: int, task_type: str, model: str = "", model_version: str = "",
-                   prompt_version: str = "", temperature: float = 0.0, input_hash: str = "",
-                   output_hash: str = "", duration_ms: int = 0, token_input: int = 0,
-                   token_output: int = 0, status: str = "ok", error: str = "",
-                   input_text: str = "", output_text: str = "") -> int:
+def create_llm_run(
+    project_id: int,
+    task_type: str,
+    model: str = "",
+    model_version: str = "",
+    prompt_version: str = "",
+    temperature: float = 0.0,
+    input_hash: str = "",
+    output_hash: str = "",
+    duration_ms: int = 0,
+    token_input: int = 0,
+    token_output: int = 0,
+    status: str = "ok",
+    error: str = "",
+    input_text: str = "",
+    output_text: str = "",
+) -> int:
     with get_conn() as conn:
         cur = conn.execute(
             "INSERT INTO llm_run"
@@ -1736,9 +1991,25 @@ def create_llm_run(project_id: int, task_type: str, model: str = "", model_versi
             " input_hash, output_hash, duration_ms, token_input, token_output, status, "
             " error, created_at, input_text, output_text) "
             "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (project_id, task_type, model, model_version, prompt_version, temperature,
-             input_hash, output_hash, duration_ms, token_input, token_output, status,
-             error, _now(), input_text, output_text))
+            (
+                project_id,
+                task_type,
+                model,
+                model_version,
+                prompt_version,
+                temperature,
+                input_hash,
+                output_hash,
+                duration_ms,
+                token_input,
+                token_output,
+                status,
+                error,
+                _now(),
+                input_text,
+                output_text,
+            ),
+        )
         return cur.lastrowid
 
 
@@ -1748,7 +2019,8 @@ def update_llm_run(run_id: int, **fields) -> None:
     for k, v in fields.items():
         if k not in allowed:
             continue
-        sets.append(f"{k}=?"); args.append(v)
+        sets.append(f"{k}=?")
+        args.append(v)
     if not sets:
         return
     args.append(run_id)
@@ -1765,16 +2037,15 @@ def get_llm_run(run_id: int) -> LlmRun | None:
 def list_llm_runs(project_id: int, limit: int = 50) -> list:
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT * FROM llm_run WHERE project_id=? ORDER BY id DESC LIMIT ?",
-            (project_id, limit)).fetchall()
+            "SELECT * FROM llm_run WHERE project_id=? ORDER BY id DESC LIMIT ?", (project_id, limit)
+        ).fetchall()
     return [LlmRun(**dict(r)) for r in rows]
 
 
 def list_recent_llm_runs(limit: int = 500) -> list:
     """跨全部项目取最近 limit 次 LLM 调用（按时间倒序）。"""
     with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM llm_run ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        rows = conn.execute("SELECT * FROM llm_run ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
     return [LlmRun(**dict(r)) for r in rows]
 
 
@@ -1787,8 +2058,8 @@ def get_llm_run_stats(limit: int = 500) -> dict:
     """
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT token_input, token_output, status FROM llm_run "
-            "ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+            "SELECT token_input, token_output, status FROM llm_run ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
     count = len(rows)
     token_input = sum(r["token_input"] or 0 for r in rows)
     token_output = sum(r["token_output"] or 0 for r in rows)
@@ -1796,6 +2067,11 @@ def get_llm_run_stats(limit: int = 500) -> dict:
     for r in rows:
         st = (r["status"] or "ok").lower()
         status_count[st] = status_count.get(st, 0) + 1
-    return {"count": count, "token_input": token_input, "token_output": token_output,
-            "ok": status_count["ok"], "error": status_count["error"],
-            "retried": status_count["retried"]}
+    return {
+        "count": count,
+        "token_input": token_input,
+        "token_output": token_output,
+        "ok": status_count["ok"],
+        "error": status_count["error"],
+        "retried": status_count["retried"],
+    }
