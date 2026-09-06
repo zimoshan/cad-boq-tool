@@ -3,6 +3,7 @@
 复用 app/takeoff/classify.py 的启发式规则，并补充 V2 需要的
 弱电系统（ELV）细分与对象类型判定。
 """
+
 from __future__ import annotations
 
 import re
@@ -11,50 +12,87 @@ from ..takeoff.classify import classify_block, get_top_category
 
 # 电气弱电系统细分（块名/图层名关键词 → system）
 ELV_SYSTEM_RULES: dict = {
-    "CCTV":     ["CAM", "CCTV", "CAMERA"],
-    "FA":       ["SMOKE", "DETECTOR", "FA-", "FIRE_ALARM", "FAS"],
+    "CCTV": ["CAM", "CCTV", "CAMERA"],
+    "FA": ["SMOKE", "DETECTOR", "FA-", "FIRE_ALARM", "FAS"],
     "LIGHTING": ["LIGHT", "LITE", "LUMINAIRE"],
-    "AP/WIFI":  ["AP-", "WIFI", "ACCESS_POINT", "WAP"],
-    "DATA":     ["DATA", "NETWORK", "LAN", "RJ45", "PATCH"],
-    "TELEPHONE":["TELE", "TEL-", "PHONE", "EPABX"],
-    "AV":       ["SPEAKER", "AUDIO", "PA-", "BGM", "AV-"],
-    "ACCESS":   ["ACS", "CARD", "READER", "DOOR"],
-    "UPS":      ["UPS", "PDU"],
-    "BUS":      ["BUS", "BUSBAR", "TRA"]
+    "AP/WIFI": ["AP-", "WIFI", "ACCESS_POINT", "WAP"],
+    "DATA": ["DATA", "NETWORK", "LAN", "RJ45", "PATCH"],
+    "TELEPHONE": ["TELE", "TEL-", "PHONE", "EPABX"],
+    "AV": ["SPEAKER", "AUDIO", "PA-", "BGM", "AV-"],
+    "ACCESS": ["ACS", "CARD", "READER", "DOOR"],
+    "UPS": ["UPS", "PDU"],
+    "BUS": ["BUS", "BUSBAR", "TRA"],
 }
 
 # 图层名 → discipline 映射（优先于 classify 通用规则）
 DISCIPLINE_LAYER_RULES: dict = {
-    "ELV":    ["ELV", "T-", "TELE", "DATA", "FA", "CCTV", "BA", "AV-"],
-    "LV":     ["E-", "ELEC", "POWER", "LITE", "LIGHT"],
-    "FIRE":   ["FIRE", "FP", "SP-", "SPRINKLER"],
-    "HVAC":   ["HVAC", "DUCT", "AHU", "VAV", "CHW", "HW-"],
+    "ELV": ["ELV", "T-", "TELE", "DATA", "FA", "CCTV", "BA", "AV-"],
+    "LV": ["E-", "ELEC", "POWER", "LITE", "LIGHT"],
+    "FIRE": ["FIRE", "FP", "SP-", "SPRINKLER"],
+    "HVAC": ["HVAC", "DUCT", "AHU", "VAV", "CHW", "HW-"],
     "PLUMBING": ["WS", "WATER", "DRAIN", "P-", "W-", "PLUMB"],
 }
 
 # 建筑/装饰背景图层（不算机电设备，候选生成跳过）
 BUILDING_BG_KEYWORDS = [
     # 墙/柱/门窗/楼板/屋顶
-    "WALL", "WALL-BRICK", "WALL-", "COLUMN", "BEAM", "FLOOR", "SLAB",
-    "ROOF", "DOOR", "WINDOW", "STAIR", "RAILING", "BALUSTRADE",
+    "WALL",
+    "WALL-BRICK",
+    "WALL-",
+    "COLUMN",
+    "BEAM",
+    "FLOOR",
+    "SLAB",
+    "ROOF",
+    "DOOR",
+    "WINDOW",
+    "STAIR",
+    "RAILING",
+    "BALUSTRADE",
     # 装饰/石膏/瓷片/石材
-    "PLASTER", "CLAD", "TILE", "STONE", "PAINT", "FINISH", "DTL-",
-    "SKETCH", "HATCH-WALL",
+    "PLASTER",
+    "CLAD",
+    "TILE",
+    "STONE",
+    "PAINT",
+    "FINISH",
+    "DTL-",
+    "SKETCH",
+    "HATCH-WALL",
     # 家具
-    "FURN", "FURN-MED", "FURN-WC", "FURN-CUSTOM", "FURN-READY",
-    "FURN-MECH", "FURN-ELEC", "FURN-KITCHEN",
+    "FURN",
+    "FURN-MED",
+    "FURN-WC",
+    "FURN-CUSTOM",
+    "FURN-READY",
+    "FURN-MECH",
+    "FURN-ELEC",
+    "FURN-KITCHEN",
     # 门窗明细/剖面
-    "DTL-WOOD", "DTL-STEEL", "DTL-GLASS", "DTL-PROFILE",
+    "DTL-WOOD",
+    "DTL-STEEL",
+    "DTL-GLASS",
+    "DTL-PROFILE",
     "DTL-GLASS-DOOR",
     # 房间标识 / 标高
-    "ROOM-IDEN", "ROOM-NAME", "ELEV", "ELEV-HIDDEN", "ELEV-5",
+    "ROOM-IDEN",
+    "ROOM-NAME",
+    "ELEV",
+    "ELEV-HIDDEN",
+    "ELEV-5",
     # 医疗不锈钢固定件
-    "STAINLESS_STEEL_OPERATION", "STAINLESS_STEEL_OPERATION_ROOM",
-    "MEDICAL_GAS", "XRAY", "OPERATION_THEATER",
+    "STAINLESS_STEEL_OPERATION",
+    "STAINLESS_STEEL_OPERATION_ROOM",
+    "MEDICAL_GAS",
+    "XRAY",
+    "OPERATION_THEATER",
     # 隔墙预留/家具装饰
-    "SHAFT-REZRV", "SHAFT-RES", "INSULATION",
+    "SHAFT-REZRV",
+    "SHAFT-RES",
+    "INSULATION",
     # 外部引用 / 草图
-    "XREF", "SKETCH",
+    "XREF",
+    "SKETCH",
     # 医疗家具与电视（墙壁挂设备不算 BOQ 设备）
     "TV",
     # 建筑梯段/楼梯
@@ -77,6 +115,7 @@ def _is_building_bg_layer(layer_name: str = "") -> bool:
     if not layer_name or layer_name == "0":
         return True  # 空 / 默认图层
     import re as _re
+
     upper = layer_name.upper()
     for kw in BUILDING_BG_KEYWORDS:
         ku = kw.upper().strip()
@@ -105,18 +144,19 @@ def _is_building_bg_layer(layer_name: str = "") -> bool:
             return True
     return False
 
+
 # 设备类块 → 对象类型细分（缺省 equipment）
 EQUIPMENT_TYPE_RULES: dict = {
-    "camera":      ["CAM", "CCTV"],
-    "detector":    ["DETECTOR", "SMOKE"],
-    "lamp":        ["LIGHT", "LUMINAIRE", "FIXTURE"],
-    "outlet":      ["OUTLET", "RECEPTACLE"],
-    "switch":      ["SWITCH"],
-    "panel":       ["PANEL", "BOARD", "CABINET", "MCC"],
-    "ap":          ["AP", "ACCESS_POINT", "WAP", "WIFI"],
-    "speaker":     ["SPEAKER", "HORN"],
-    "sensor":      ["SENSOR", "THERMOSTAT", "METER"],
-    "valve":       ["VALVE", "GATE", "BALL", "CHECK"],
+    "camera": ["CAM", "CCTV"],
+    "detector": ["DETECTOR", "SMOKE"],
+    "lamp": ["LIGHT", "LUMINAIRE", "FIXTURE"],
+    "outlet": ["OUTLET", "RECEPTACLE"],
+    "switch": ["SWITCH"],
+    "panel": ["PANEL", "BOARD", "CABINET", "MCC"],
+    "ap": ["AP", "ACCESS_POINT", "WAP", "WIFI"],
+    "speaker": ["SPEAKER", "HORN"],
+    "sensor": ["SENSOR", "THERMOSTAT", "METER"],
+    "valve": ["VALVE", "GATE", "BALL", "CHECK"],
 }
 
 # 线性/面积判定用的几何类型

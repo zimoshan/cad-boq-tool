@@ -4,16 +4,17 @@ EXACT / NORMALIZED_EQUAL / COMPATIBLE / UNKNOWN / CONFLICT
 
 不能让 LLM 的文字理由覆盖硬冲突（needs_review = true）
 """
+
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from enum import Enum
-from typing import Optional
+from enum import StrEnum
 
 
-class SpecMatchStatus(str, Enum):
+class SpecMatchStatus(StrEnum):
     """v1.0 §19 5 状态"""
+
     EXACT = "EXACT"
     NORMALIZED_EQUAL = "NORMALIZED_EQUAL"
     COMPATIBLE = "COMPATIBLE"
@@ -34,6 +35,7 @@ KEY_PARAM_PATTERNS = [
 @dataclass
 class SpecMatchResult:
     """规格匹配结果"""
+
     status: SpecMatchStatus
     needs_review: bool
     detail: str = ""
@@ -85,7 +87,8 @@ def match_spec(spec_a: str, spec_b: str) -> SpecMatchResult:
     for key in params_a:
         if key in params_b and params_a[key] != params_b[key]:
             return SpecMatchResult(
-                SpecMatchStatus.CONFLICT, needs_review=True,
+                SpecMatchStatus.CONFLICT,
+                needs_review=True,
                 detail=f"关键参数 {key} 不一致: {params_a[key]} vs {params_b[key]}",
             )
 
@@ -94,7 +97,7 @@ def match_spec(spec_a: str, spec_b: str) -> SpecMatchResult:
     nums_b = re.findall(r"[\d.]+", spec_b)
     if nums_a and nums_b:
         try:
-            for na, nb in zip(nums_a, nums_b):
+            for na, nb in zip(nums_a, nums_b, strict=False):
                 a, b = float(na), float(nb)
                 if a > 0 and b > 0:
                     diff = abs(a - b) / max(a, b)

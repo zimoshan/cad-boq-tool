@@ -1,6 +1,8 @@
 """DWG → DXF 转换（ODA File Converter CLI 封装）"""
+
 from __future__ import annotations
 
+import contextlib
 import os
 import platform
 import shutil
@@ -8,7 +10,6 @@ import subprocess
 from pathlib import Path
 
 from ..config import ODA_INSTALL_HINTS
-
 
 # B5 S1 DWG 无头转换（v2.0 §2.5，2026-09-06）：
 # 1) 跨平台 ODA 二进制名（Windows .exe / Linux 无后缀）
@@ -118,6 +119,7 @@ def convert_dwg_to_dxf(dwg_path: str, out_dir: str, version: str = "ACAD2018") -
     # 独立工作目录（只含目标文件）
     import shutil
     import uuid
+
     work = out / f"_work_{uuid.uuid4().hex[:6]}"
     work.mkdir(parents=True, exist_ok=True)
     try:
@@ -125,7 +127,9 @@ def convert_dwg_to_dxf(dwg_path: str, out_dir: str, version: str = "ACAD2018") -
         # ODAFileConverter.exe <in_dir> <out_dir> <version> <type> <recurse> <audit>
         proc = subprocess.run(
             [exe, str(work), str(out), version, "DXF", "0", "1"],
-            capture_output=True, text=True, timeout=300,
+            capture_output=True,
+            text=True,
+            timeout=300,
         )
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -140,14 +144,12 @@ def convert_dwg_to_dxf(dwg_path: str, out_dir: str, version: str = "ACAD2018") -
         )
     if proc.returncode != 0:
         import logging
-        logging.warning(
-            f"ODA 转换退出码 {proc.returncode} 但已生成 DXF，忽略: {target}"
-        )
+
+        logging.warning(f"ODA 转换退出码 {proc.returncode} 但已生成 DXF，忽略: {target}")
     return str(target)
 
 
-def convert_dwgs_batch(dwg_paths: list, out_dir: str, parallel: int = 4,
-                       version: str = "ACAD2018") -> dict:
+def convert_dwgs_batch(dwg_paths: list, out_dir: str, parallel: int = 4, version: str = "ACAD2018") -> dict:
     """批量 DWG → DXF（多 ODA 实例并行，每个实例一次启动转一组）。
 
     ODAFileConverter 的输入是目录（目录内全部 DWG 一起转换），因此把
@@ -172,8 +174,7 @@ def convert_dwgs_batch(dwg_paths: list, out_dir: str, parallel: int = 4,
     # 负载均衡分组（按文件大小贪心，大文件优先放最小组）；
     # 同 stem 重名文件分到不同组，避免同目录转换互相覆盖
     n_groups = max(1, min(parallel, len(dwg_paths)))
-    flat = sorted((Path(p) for p in dwg_paths),
-                  key=lambda p: -p.stat().st_size if p.exists() else 0)
+    flat = sorted((Path(p) for p in dwg_paths), key=lambda p: -p.stat().st_size if p.exists() else 0)
     sizes = [0] * n_groups
     groups = [[] for _ in range(n_groups)]
     stem_last = {}
@@ -204,13 +205,13 @@ def convert_dwgs_batch(dwg_paths: list, out_dir: str, parallel: int = 4,
                     shutil.copy2(f, work / f.name)
                 except OSError:
                     continue
-            try:
+            with contextlib.suppress(subprocess.TimeoutExpired):
                 subprocess.run(
                     [exe, str(work), str(out_sub), version, "DXF", "0", "1"],
-                    capture_output=True, text=True, timeout=600,
+                    capture_output=True,
+                    text=True,
+                    timeout=600,
                 )
-            except subprocess.TimeoutExpired:
-                pass
             results = []
             for f in files:
                 dxf = out_sub / (f.stem + ".dxf")

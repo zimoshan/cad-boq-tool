@@ -5,9 +5,13 @@
   - 只有本模块（人工确认 或 确定性规则自动通过）能把候选写入正式 mapping；
   - 确认后同一 EO 的其他 PENDING 候选自动 SUPERSEDED。
 """
+
 from __future__ import annotations
 
-from .. import db, mapping as map_svc
+import contextlib
+
+from .. import db
+from .. import mapping as map_svc
 from . import candidate as cand
 
 
@@ -23,7 +27,7 @@ def _write_symbol_knowledge(project_id: int, eo, boq_item_id: int) -> None:
     if not eo.block_name and not eo.layer_name:
         return
     bi = next((b for b in db.get_boq_items(project_id) if b.id == boq_item_id), None)
-    try:
+    with contextlib.suppress(Exception):
         db.upsert_symbol(
             project_id,
             block_name=eo.block_name or "",
@@ -36,12 +40,9 @@ def _write_symbol_knowledge(project_id: int, eo, boq_item_id: int) -> None:
             source="manual",
             confirmed_by="human",
         )
-    except Exception:
-        pass
 
 
-def _accepted_block_boq(project_id: int, block_name: str, layer_name: str,
-                        exclude_cid: int = None) -> int | None:
+def _accepted_block_boq(project_id: int, block_name: str, layer_name: str, exclude_cid: int = None) -> int | None:
     """该 block/layer 已被确认（ACCEPTED）到的 BOQ item 唯一性校验（2.3.2）。
 
     Returns:
@@ -53,9 +54,11 @@ def _accepted_block_boq(project_id: int, block_name: str, layer_name: str,
         return None
     eo_conds, args = [], [project_id]
     if block_name:
-        eo_conds.append("block_name=?"); args.append(block_name)
+        eo_conds.append("block_name=?")
+        args.append(block_name)
     if layer_name:
-        eo_conds.append("layer_name=?"); args.append(layer_name)
+        eo_conds.append("layer_name=?")
+        args.append(layer_name)
     eo_where = " OR ".join(eo_conds)
     with db.get_conn() as conn:
         # 1) ACCEPTED 候选
@@ -63,17 +66,15 @@ def _accepted_block_boq(project_id: int, block_name: str, layer_name: str,
             "SELECT DISTINCT boq_item_id FROM binding_candidate "
             "WHERE status='ACCEPTED' AND project_id=? "
             "AND engineering_object_id IN ("
-            "  SELECT id FROM engineering_object WHERE " + eo_where + ")")
+            "  SELECT id FROM engineering_object WHERE " + eo_where + ")"
+        )
         params = list(args)
         if exclude_cid is not None:
             sql += " AND id<>?"
             params.append(exclude_cid)
         rows = conn.execute(sql, params).fetchall()
         # 2) mapping（block/layer 同名，同项目）
-        msql = (
-            "SELECT DISTINCT m.boq_item_id FROM mapping m "
-            "JOIN sheet s ON s.id=m.sheet_id "
-            "WHERE s.project_id=? AND (")
+        msql = "SELECT DISTINCT m.boq_item_id FROM mapping m JOIN sheet s ON s.id=m.sheet_id WHERE s.project_id=? AND ("
         mparams = [project_id]
         mconds = []
         if block_name:
@@ -89,8 +90,7 @@ def _accepted_block_boq(project_id: int, block_name: str, layer_name: str,
     return rows[0]["boq_item_id"] if rows else None
 
 
-def confirm_binding(project_id: int, candidate_id: int,
-                    project_scale: float = 1.0) -> dict:
+def confirm_binding(project_id: int, candidate_id: int, project_scale: float = 1.0) -> dict:
     """人工确认候选 → ACCEPTED → 写正式 mapping → 重算。
 
     Returns:
@@ -109,8 +109,7 @@ def confirm_binding(project_id: int, candidate_id: int,
         raise ReviewError(f"工程对象缺失: {c.engineering_object_id}")
 
     # 图块↔BOQ 唯一性校验（2.3.2）：同名块/图层已确认到另一条目 → 拒绝重复绑定
-    existing = _accepted_block_boq(project_id, eo.block_name, eo.layer_name,
-                                   exclude_cid=candidate_id)
+    existing = _accepted_block_boq(project_id, eo.block_name, eo.layer_name, exclude_cid=candidate_id)
     if existing is not None and existing != c.boq_item_id:
         bi = db.get_boq_items(project_id)
         pros = {b.id: b for b in bi}
@@ -118,7 +117,8 @@ def confirm_binding(project_id: int, candidate_id: int,
         old_code = f"{old.code} {old.description}"[:40] if old else str(existing)
         raise ReviewError(
             f"图块 {eo.block_name or eo.layer_name} 已绑定到 BOQ#{existing}（{old_code}）；"
-            f"一图块只能对应一个 BOQ 子项，请勿重复绑定")
+            f"一图块只能对应一个 BOQ 子项，请勿重复绑定"
+        )
 
     # 写正式 mapping：equipment→block 模式；linear/area→layer 模式（任务八）
     if eo.object_type == "equipment" and eo.block_name:
@@ -147,16 +147,22 @@ def confirm_binding(project_id: int, candidate_id: int,
     db.update_candidate_status(candidate_id, cand.STATUS_ACCEPTED)
     db.supersede_candidates(eo.id, exclude_cid=candidate_id)
     db.supersede_candidates_by_anchor(
-        project_id, block_name=eo.block_name, layer_name=eo.layer_name,
-        exclude_cid=candidate_id)
+        project_id, block_name=eo.block_name, layer_name=eo.layer_name, exclude_cid=candidate_id
+    )
 
     # 确定性重算
     from .resolver import recompute
+
     res = recompute(project_id, boq_item_id=c.boq_item_id, project_scale=project_scale)
     r = res.get(c.boq_item_id, {"qty": 0.0, "count": 0})
 
-    return {"candidate_id": candidate_id, "mapping_mode": mode, "boq_item_id": c.boq_item_id,
-            "qty": r["qty"], "count": r["count"]}
+    return {
+        "candidate_id": candidate_id,
+        "mapping_mode": mode,
+        "boq_item_id": c.boq_item_id,
+        "qty": r["qty"],
+        "count": r["count"],
+    }
 
 
 def reject_binding(candidate_id: int, reason: str = "人工拒绝") -> None:
@@ -169,8 +175,7 @@ def reject_binding(candidate_id: int, reason: str = "人工拒绝") -> None:
     db.update_candidate_status(candidate_id, cand.STATUS_REJECTED)
     # 拒绝原因记到候选 reason（追加），供 reviewer 界面展示
     with db.get_conn() as conn:
-        conn.execute("UPDATE binding_candidate SET reason=reason || ' | ' || ? WHERE id=?",
-                     (reason, candidate_id))
+        conn.execute("UPDATE binding_candidate SET reason=reason || ' | ' || ? WHERE id=?", (reason, candidate_id))
 
 
 def auto_confirm_rule_candidates(project_id: int) -> dict:

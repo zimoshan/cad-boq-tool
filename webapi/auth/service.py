@@ -3,6 +3,7 @@
 Phase 0 占位：仅建表 + Casbin 策略就绪
 Phase 1+ 业务期：补齐 CRUD
 """
+
 from __future__ import annotations
 
 from sqlalchemy import select

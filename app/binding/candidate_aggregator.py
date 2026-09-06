@@ -5,20 +5,21 @@
 2. 按置信度降序排列（最高置信候选优先）
 3. 块名与 BOQ 描述相似度高的候选提升排名
 """
+
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Optional
 
 from .. import db
-from ..models import BindingCandidate, EngineeringObject, BoqItem
-from .text_norm import normalize, compact, string_similarity
+from ..models import BindingCandidate, BoqItem, EngineeringObject
+from .text_norm import normalize, string_similarity
 
 
 @dataclass
 class AggregatedCandidate:
     """聚合后的候选组"""
+
     block_name: str
     layer_name: str
     object_type: str
@@ -27,7 +28,7 @@ class AggregatedCandidate:
     max_confidence: float = 0.0
     avg_confidence: float = 0.0
     similarity_score: float = 0.0  # 块名与最佳 BOQ 描述的相似度
-    best_boq_item: Optional[BoqItem] = None
+    best_boq_item: BoqItem | None = None
     sheet_names: list[str] = field(default_factory=list)
     total_count: int = 0  # 该块在图纸中的总出现次数
 
@@ -55,10 +56,7 @@ def calculate_name_similarity(block_name: str, boq_description: str) -> float:
     desc_words = set(re.split(r"[\s_\-/\\.,()\[\]]+", desc))
     bn_words = {w for w in bn_words if len(w) >= 2}
     desc_words = {w for w in desc_words if len(w) >= 2}
-    if bn_words and desc_words:
-        overlap = len(bn_words & desc_words) / max(len(bn_words), len(desc_words))
-    else:
-        overlap = 0.0
+    overlap = len(bn_words & desc_words) / max(len(bn_words), len(desc_words)) if bn_words and desc_words else 0.0
 
     # 3. 编号匹配（权重 0.1）
     # 提取块名中的编号（如 AL-01 中的 01）
@@ -72,10 +70,7 @@ def calculate_name_similarity(block_name: str, boq_description: str) -> float:
 
 
 def aggregate_candidates(
-    project_id: int,
-    status: str = "PENDING",
-    sheet_id: int = None,
-    limit: int = 100
+    project_id: int, status: str = "PENDING", sheet_id: int = None, limit: int = 100
 ) -> list[AggregatedCandidate]:
     """按块名聚合候选，返回排序后的聚合列表。
 
@@ -152,13 +147,11 @@ def aggregate_candidates(
 
             # 计算块名与 BOQ 描述的相似度
             if group.block_name and best_boq.description:
-                group.similarity_score = calculate_name_similarity(
-                    group.block_name, best_boq.description)
+                group.similarity_score = calculate_name_similarity(group.block_name, best_boq.description)
 
     # 排序：相似度 > 最高置信度 > 总数
     sorted_groups = sorted(
-        block_groups.values(),
-        key=lambda g: (-g.similarity_score, -g.max_confidence, -g.total_count)
+        block_groups.values(), key=lambda g: (-g.similarity_score, -g.max_confidence, -g.total_count)
     )
 
     return sorted_groups[:limit]
@@ -182,31 +175,29 @@ def get_aggregated_summary(groups: list[AggregatedCandidate]) -> dict:
 
 
 def filter_groups_by_similarity(
-    groups: list[AggregatedCandidate],
-    min_similarity: float = 0.5
+    groups: list[AggregatedCandidate], min_similarity: float = 0.5
 ) -> list[AggregatedCandidate]:
     """过滤相似度低于阈值的组。"""
     return [g for g in groups if g.similarity_score >= min_similarity]
 
 
-def get_top_candidates_per_group(
-    groups: list[AggregatedCandidate],
-    top_n: int = 3
-) -> list[dict]:
+def get_top_candidates_per_group(groups: list[AggregatedCandidate], top_n: int = 3) -> list[dict]:
     """获取每个组的前 N 个最佳候选（用于 UI 展示）。"""
     results = []
     for group in groups:
         # 按置信度排序取 top_n
         top_cands = sorted(group.candidates, key=lambda c: -c.confidence)[:top_n]
-        results.append({
-            "block_name": group.block_name,
-            "layer_name": group.layer_name,
-            "object_type": group.object_type,
-            "total_candidates": len(group.candidates),
-            "max_confidence": group.max_confidence,
-            "similarity_score": group.similarity_score,
-            "best_boq": group.best_boq_item.description if group.best_boq_item else "",
-            "top_candidates": top_cands,
-            "sheet_names": group.sheet_names,
-        })
+        results.append(
+            {
+                "block_name": group.block_name,
+                "layer_name": group.layer_name,
+                "object_type": group.object_type,
+                "total_candidates": len(group.candidates),
+                "max_confidence": group.max_confidence,
+                "similarity_score": group.similarity_score,
+                "best_boq": group.best_boq_item.description if group.best_boq_item else "",
+                "top_candidates": top_cands,
+                "sheet_names": group.sheet_names,
+            }
+        )
     return results

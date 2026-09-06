@@ -1,14 +1,13 @@
 """质量检测 + 跨图去重（23-4）。"""
-from __future__ import annotations
 
-from typing import List, Dict, Tuple
+from __future__ import annotations
 
 from .orchestrator import TakeoffItem
 
 
-def reconcile_across_files(items: List[TakeoffItem]) -> List[TakeoffItem]:
+def reconcile_across_files(items: list[TakeoffItem]) -> list[TakeoffItem]:
     """跨图/跨层去重：相同 code+unit 合并为 1 条（数值累加）"""
-    merged: Dict[Tuple[str, str], TakeoffItem] = {}
+    merged: dict[tuple[str, str], TakeoffItem] = {}
     for it in items:
         key = (it.code, it.unit)
         if key in merged:
@@ -23,7 +22,7 @@ def reconcile_across_files(items: List[TakeoffItem]) -> List[TakeoffItem]:
     return list(merged.values())
 
 
-def detect_conflicts(items: List[TakeoffItem], threshold: float = 0.10) -> List[TakeoffItem]:
+def detect_conflicts(items: list[TakeoffItem], threshold: float = 0.10) -> list[TakeoffItem]:
     """检测同 code+unit 但数值差异 > threshold 的冲突项，标记 conflict=True
 
     Args:
@@ -34,7 +33,7 @@ def detect_conflicts(items: List[TakeoffItem], threshold: float = 0.10) -> List[
         标记后的 items（新增 .raw['_conflict'] 字段）
     """
     # 按 code+unit 分组
-    groups: Dict[Tuple[str, str], List[TakeoffItem]] = {}
+    groups: dict[tuple[str, str], list[TakeoffItem]] = {}
     for it in items:
         key = (it.code, it.unit)
         groups.setdefault(key, []).append(it)

@@ -1,4 +1,5 @@
 """webapi 全局配置（Pydantic Settings 读取 env.example）"""
+
 from __future__ import annotations
 
 from functools import lru_cache

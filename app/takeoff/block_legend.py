@@ -8,13 +8,13 @@
 
 本模块只负责「数据 + LLM 建议」，UI 在 app/ui/legend_panel.py，接管算量在 orchestrator.py。
 """
+
 from __future__ import annotations
 
 import json
 import re
 
 from .. import db
-
 
 # 类别与规则的合法取值（供 UI ComboBox 与校验复用）
 # 「建筑」= 门/窗/墙/柱/洁具/家具/轴线/标注等非算量图元（LLM 快筛先行，UI 默认隐藏）
@@ -38,24 +38,103 @@ FILTER_NUM_PREDICT = 4096
 # 拉丁 token 整词匹配（块名按非字母数字汉字切分后全等比较，
 # 避免 WALL 子串误伤 WALLDIM 之类；WIN 整词不会命中 WINDOWX）
 BUILDING_TOKENS = {
-    "DOOR", "DOORS", "WIN", "WINDOW", "WINDOWS", "WALL", "WALLS",
-    "COLUMN", "COLUMNS", "AXIS", "AXES", "GRID",
-    "DIM", "DIMS", "DIMENSION", "TEXT", "TITLE", "TITLEBLOCK", "FRAME",
-    "ARROW", "NORTH", "SYMBOL", "SYM", "DESK", "CHAIR", "SOFA", "BED",
-    "WC", "TOILET", "LAVATORY", "BASIN", "SINK", "SHOWER", "BATHTUB", "URINAL",
-    "FURNITURE", "ANNOTATION", "ELEVATION", "SECTION",
+    "DOOR",
+    "DOORS",
+    "WIN",
+    "WINDOW",
+    "WINDOWS",
+    "WALL",
+    "WALLS",
+    "COLUMN",
+    "COLUMNS",
+    "AXIS",
+    "AXES",
+    "GRID",
+    "DIM",
+    "DIMS",
+    "DIMENSION",
+    "TEXT",
+    "TITLE",
+    "TITLEBLOCK",
+    "FRAME",
+    "ARROW",
+    "NORTH",
+    "SYMBOL",
+    "SYM",
+    "DESK",
+    "CHAIR",
+    "SOFA",
+    "BED",
+    "WC",
+    "TOILET",
+    "LAVATORY",
+    "BASIN",
+    "SINK",
+    "SHOWER",
+    "BATHTUB",
+    "URINAL",
+    "FURNITURE",
+    "ANNOTATION",
+    "ELEVATION",
+    "SECTION",
 }
 # 中文多字关键词子串匹配（保守：不用单字，避免误伤「门禁」「窗式空调」等设备块）
 BUILDING_SUBSTRINGS = (
-    "防火门", "平开门", "推拉门", "卷帘门", "折叠门", "门扇", "门框", "门洞",
-    "木门", "钢门", "玻璃门", "弹簧门", "门联窗",
-    "固定窗", "平开窗", "推拉窗", "飘窗", "窗扇", "窗台", "幕墙",
-    "墙体", "隔墙", "砌体", "剪力墙", "挡土墙",
-    "框架柱", "构造柱", "柱子", "暗柱",
-    "洁具", "马桶", "坐便", "蹲便", "洗脸盆", "洗手盆", "小便斗",
-    "淋浴", "浴缸", "拖布池", "水槽",
-    "家具", "办公桌", "餐桌", "座椅", "沙发", "病床",
-    "轴线", "轴网", "标注", "尺寸", "图框", "标题栏", "指北针", "箭头", "剖切",
+    "防火门",
+    "平开门",
+    "推拉门",
+    "卷帘门",
+    "折叠门",
+    "门扇",
+    "门框",
+    "门洞",
+    "木门",
+    "钢门",
+    "玻璃门",
+    "弹簧门",
+    "门联窗",
+    "固定窗",
+    "平开窗",
+    "推拉窗",
+    "飘窗",
+    "窗扇",
+    "窗台",
+    "幕墙",
+    "墙体",
+    "隔墙",
+    "砌体",
+    "剪力墙",
+    "挡土墙",
+    "框架柱",
+    "构造柱",
+    "柱子",
+    "暗柱",
+    "洁具",
+    "马桶",
+    "坐便",
+    "蹲便",
+    "洗脸盆",
+    "洗手盆",
+    "小便斗",
+    "淋浴",
+    "浴缸",
+    "拖布池",
+    "水槽",
+    "家具",
+    "办公桌",
+    "餐桌",
+    "座椅",
+    "沙发",
+    "病床",
+    "轴线",
+    "轴网",
+    "标注",
+    "尺寸",
+    "图框",
+    "标题栏",
+    "指北针",
+    "箭头",
+    "剖切",
 )
 
 
@@ -129,8 +208,7 @@ LEGEND_USER_TEMPLATE = """# 项目
 """
 
 
-def build_legend_prompt(blocks: list, project_type: str, specialty: str,
-                        existing: dict = None) -> tuple[str, str]:
+def build_legend_prompt(blocks: list, project_type: str, specialty: str, existing: dict = None) -> tuple[str, str]:
     """构建 (system, user)。
     blocks: [(block_name, count[, sheet_count])]  2 元组或 3 元组均可
     existing: {block_name: legend_dict} 已标定的条目（提示 LLM 尊重）
@@ -146,13 +224,14 @@ def build_legend_prompt(blocks: list, project_type: str, specialty: str,
         for bname, row in existing.items():
             if row.get("confirmed") or row.get("device_type"):
                 ex_lines.append(
-                    f"{bname} => {row.get('category','')}/{row.get('device_type','')}"
-                    f"/{row.get('spec','')}/{row.get('unit','')}/{row.get('count_rule','')}")
+                    f"{bname} => {row.get('category', '')}/{row.get('device_type', '')}"
+                    f"/{row.get('spec', '')}/{row.get('unit', '')}/{row.get('count_rule', '')}"
+                )
     existing_lines = "\n".join(ex_lines) if ex_lines else "（无）"
 
     user = LEGEND_USER_TEMPLATE.format(
-        project_type=project_type, specialty=specialty,
-        block_lines=block_lines, existing_lines=existing_lines)
+        project_type=project_type, specialty=specialty, block_lines=block_lines, existing_lines=existing_lines
+    )
     return LEGEND_SYSTEM_PROMPT, user
 
 
@@ -220,7 +299,7 @@ def _extract_entry_objects(content: str) -> dict:
             depth -= 1
             if depth == 0 and start >= 0:
                 try:
-                    obj = json.loads(content[start:i + 1])
+                    obj = json.loads(content[start : i + 1])
                 except json.JSONDecodeError:
                     obj = None
                 if isinstance(obj, dict):
@@ -247,11 +326,16 @@ def _extract_entry_objects(content: str) -> dict:
     return out
 
 
-def llm_suggest_legend(blocks: list, project_type: str = "医院", specialty: str = "电气",
-                       model: str = "qwen2.5:7b",
-                       host: str = "http://127.0.0.1:11434", timeout: int = 300,
-                       existing: dict = None,
-                       progress_cb=None) -> dict:
+def llm_suggest_legend(
+    blocks: list,
+    project_type: str = "医院",
+    specialty: str = "电气",
+    model: str = "qwen2.5:7b",
+    host: str = "http://127.0.0.1:11434",
+    timeout: int = 300,
+    existing: dict = None,
+    progress_cb=None,
+) -> dict:
     """调用本地 Ollama 产出块图例建议（自动过滤匿名块并分批调用）。
 
     大图纸单项目可能有两千多个块引用，一次性发给 LLM 会导致：
@@ -270,12 +354,11 @@ def llm_suggest_legend(blocks: list, project_type: str = "医院", specialty: st
     import ollama  # 运行时 import
 
     # 匿名块（AutoCAD *U 前缀）与空名块：无名可判，不发给 LLM
-    named = [(b[0], b[1]) for b in blocks
-             if b and b[0] and not b[0].strip().startswith("*")]
+    named = [(b[0], b[1]) for b in blocks if b and b[0] and not b[0].strip().startswith("*")]
     if not named:
         raise RuntimeError(
-            "项目中只有匿名块（*U 开头）或无名块，LLM 无法按块名判断语义，"
-            "请使用「手动标定」直接在表格内填写。")
+            "项目中只有匿名块（*U 开头）或无名块，LLM 无法按块名判断语义，请使用「手动标定」直接在表格内填写。"
+        )
     # 引用次数多的优先（重要的块先标定）
     named.sort(key=lambda x: -x[1])
 
@@ -284,7 +367,7 @@ def llm_suggest_legend(blocks: list, project_type: str = "医院", specialty: st
     except TypeError:  # 旧版 ollama-python 不支持 timeout
         client = ollama.Client(host=host)
 
-    batches = [named[i:i + LLM_BATCH_SIZE] for i in range(0, len(named), LLM_BATCH_SIZE)]
+    batches = [named[i : i + LLM_BATCH_SIZE] for i in range(0, len(named), LLM_BATCH_SIZE)]
     total = len(batches)
     suggestions: dict = {}
     failures = []
@@ -295,9 +378,9 @@ def llm_suggest_legend(blocks: list, project_type: str = "医院", specialty: st
         try:
             resp = client.chat(
                 model=model,
-                messages=[{"role": "system", "content": system},
-                          {"role": "user", "content": user}],
-                options={"temperature": 0.1, "num_predict": LLM_NUM_PREDICT})
+                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+                options={"temperature": 0.1, "num_predict": LLM_NUM_PREDICT},
+            )
             content = resp["message"]["content"]
             sugg = parse_suggestions(content)
             if not sugg:
@@ -309,13 +392,11 @@ def llm_suggest_legend(blocks: list, project_type: str = "医院", specialty: st
             continue
 
     if not suggestions:
-        raise RuntimeError(
-            "LLM 全部批次调用失败：\n" + "\n".join(failures[:5]))
+        raise RuntimeError("LLM 全部批次调用失败：\n" + "\n".join(failures[:5]))
     return suggestions
 
 
-def apply_suggestions(project_id: int, suggestions: dict,
-                      existing_map: dict = None) -> list:
+def apply_suggestions(project_id: int, suggestions: dict, existing_map: dict = None) -> list:
     """把 LLM 建议转成待保存行。
 
     规则：
@@ -344,18 +425,20 @@ def apply_suggestions(project_id: int, suggestions: dict,
             category = sug.get("category", "")
             unit = sug.get("unit", "个")
             count_rule = sug.get("count_rule", "count")
-        rows.append({
-            "project_id": project_id,
-            "block_name": bname,
-            "category": category,
-            "device_type": device_type,
-            "spec": spec,
-            "unit": unit,
-            "count_rule": count_rule,
-            "confirmed": 0,             # 待人工复核
-            "source": "llm",
-            "note": sug.get("reasoning", ""),
-        })
+        rows.append(
+            {
+                "project_id": project_id,
+                "block_name": bname,
+                "category": category,
+                "device_type": device_type,
+                "spec": spec,
+                "unit": unit,
+                "count_rule": count_rule,
+                "confirmed": 0,  # 待人工复核
+                "source": "llm",
+                "note": sug.get("reasoning", ""),
+            }
+        )
     return rows
 
 
@@ -390,8 +473,7 @@ FILTER_USER_TEMPLATE = """# 项目
 """
 
 
-def build_filter_prompt(block_names: list, project_type: str, specialty: str,
-                        existing: dict = None) -> tuple[str, str]:
+def build_filter_prompt(block_names: list, project_type: str, specialty: str, existing: dict = None) -> tuple[str, str]:
     """构建快筛 (system, user)。block_names: [block_name]"""
     lines = [f"{i + 1}. {b}" for i, b in enumerate(block_names)]
     ex_lines = []
@@ -400,9 +482,11 @@ def build_filter_prompt(block_names: list, project_type: str, specialty: str,
             if row.get("confirmed") and row.get("category"):
                 ex_lines.append(f"{bname} => {row['category']}")
     user = FILTER_USER_TEMPLATE.format(
-        project_type=project_type, specialty=specialty,
+        project_type=project_type,
+        specialty=specialty,
         block_lines="\n".join(lines) if lines else "（无）",
-        existing_lines="\n".join(ex_lines) if ex_lines else "（无）")
+        existing_lines="\n".join(ex_lines) if ex_lines else "（无）",
+    )
     return FILTER_SYSTEM_PROMPT, user
 
 
@@ -469,7 +553,7 @@ def parse_filter_result(content: str) -> dict:
             depth -= 1
             if depth == 0 and start >= 0:
                 try:
-                    obj = json.loads(content[start:i + 1])
+                    obj = json.loads(content[start : i + 1])
                 except json.JSONDecodeError:
                     obj = None
                 if isinstance(obj, dict):
@@ -484,10 +568,16 @@ def parse_filter_result(content: str) -> dict:
     return out
 
 
-def llm_filter_devices(blocks: list, project_type: str = "医院",
-                       specialty: str = "电气", model: str = "qwen2.5:7b",
-                       host: str = "http://127.0.0.1:11434", timeout: int = 300,
-                       existing: dict = None, progress_cb=None) -> dict:
+def llm_filter_devices(
+    blocks: list,
+    project_type: str = "医院",
+    specialty: str = "电气",
+    model: str = "qwen2.5:7b",
+    host: str = "http://127.0.0.1:11434",
+    timeout: int = 300,
+    existing: dict = None,
+    progress_cb=None,
+) -> dict:
     """LLM 快筛：判断每个块属于 设备/线缆/建筑/其他。
 
     两级筛选：
@@ -513,10 +603,10 @@ def llm_filter_devices(blocks: list, project_type: str = "医院",
             continue
         prev = existing.get(bname)
         if prev and prev.get("confirmed") and (prev.get("category") or "").strip():
-            result[bname] = prev["category"].strip()      # 人工已确认，尊重
+            result[bname] = prev["category"].strip()  # 人工已确认，尊重
             continue
         if is_building_by_rule(bname):
-            result[bname] = "建筑"                        # 规则预筛命中，零成本
+            result[bname] = "建筑"  # 规则预筛命中，零成本
             continue
         todo.append(bname)
     if not todo:
@@ -527,8 +617,7 @@ def llm_filter_devices(blocks: list, project_type: str = "医院",
     except TypeError:  # 旧版 ollama-python 不支持 timeout
         client = ollama.Client(host=host)
 
-    batches = [todo[i:i + FILTER_BATCH_SIZE]
-               for i in range(0, len(todo), FILTER_BATCH_SIZE)]
+    batches = [todo[i : i + FILTER_BATCH_SIZE] for i in range(0, len(todo), FILTER_BATCH_SIZE)]
     total = len(batches)
     failures = []
     for i, batch in enumerate(batches, 1):
@@ -538,9 +627,9 @@ def llm_filter_devices(blocks: list, project_type: str = "医院",
         try:
             resp = client.chat(
                 model=model,
-                messages=[{"role": "system", "content": system},
-                          {"role": "user", "content": user}],
-                options={"temperature": 0.1, "num_predict": FILTER_NUM_PREDICT})
+                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+                options={"temperature": 0.1, "num_predict": FILTER_NUM_PREDICT},
+            )
             got = parse_filter_result(resp["message"]["content"])
             if not got:
                 failures.append(f"批次 {i}（{batch[0]} 等 {len(batch)} 块）输出无法解析")
@@ -555,8 +644,7 @@ def llm_filter_devices(blocks: list, project_type: str = "医院",
     return result
 
 
-def apply_filter(project_id: int, classification: dict,
-                 existing_map: dict = None) -> list:
+def apply_filter(project_id: int, classification: dict, existing_map: dict = None) -> list:
     """把快筛分类转成待保存行（只更新 category，不动 device_type/spec 等字段）。
 
     规则：
@@ -574,9 +662,9 @@ def apply_filter(project_id: int, classification: dict,
         prev = existing_map.get(bname)
         if prev:
             if prev.get("confirmed") and (prev.get("category") or "").strip():
-                continue    # 人工已确认，不覆盖
+                continue  # 人工已确认，不覆盖
             if prev.get("source") == "manual" and (prev.get("category") or "").strip():
-                continue    # 人工右键纠正过，不覆盖
+                continue  # 人工右键纠正过，不覆盖
             row = dict(prev)
             row["category"] = cat
             row["source"] = prev.get("source") or "llm"

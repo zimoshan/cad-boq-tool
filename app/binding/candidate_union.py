@@ -14,9 +14,9 @@
 
 不要过早硬截断（v1.0 §18）
 """
+
 from __future__ import annotations
 
-from collections import defaultdict
 from typing import Any
 
 
@@ -51,9 +51,7 @@ def union_candidates(
                 by_boq[boq_id] = merged
 
     # 排序：按 score 降序，截 top_n（v1.0 §18 保留 15-30）
-    sorted_candidates = sorted(
-        by_boq.values(), key=lambda c: c.get("score", 0), reverse=True
-    )
+    sorted_candidates = sorted(by_boq.values(), key=lambda c: c.get("score", 0), reverse=True)
     return sorted_candidates[:top_n]
 
 
@@ -76,11 +74,13 @@ def lexical_layer(
 
     scored: list[dict[str, Any]] = []
     for boq in boq_items:
-        boq_text = " ".join([
-            str(boq.get("description", "")),
-            str(boq.get("spec", "")),
-            str(boq.get("code", "")),
-        ]).lower()
+        boq_text = " ".join(
+            [
+                str(boq.get("description", "")),
+                str(boq.get("spec", "")),
+                str(boq.get("code", "")),
+            ]
+        ).lower()
         boq_tokens = set(boq_text.split())
         if not boq_tokens:
             continue
@@ -89,11 +89,13 @@ def lexical_layer(
         union = eo_tokens | boq_tokens
         score = len(intersection) / len(union) if union else 0.0
         if score > 0:
-            scored.append({
-                "boq_item_id": boq.get("id"),
-                "score": score,
-                "source": "lexical",
-            })
+            scored.append(
+                {
+                    "boq_item_id": boq.get("id"),
+                    "score": score,
+                    "source": "lexical",
+                }
+            )
 
     scored.sort(key=lambda c: c["score"], reverse=True)
     return scored[:top_n]

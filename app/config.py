@@ -1,4 +1,5 @@
 """全局配置"""
+
 import os
 from pathlib import Path
 
@@ -55,18 +56,18 @@ BOQ_HEADER_CANDIDATES = {
 DEFAULT_SCALE_FACTOR = 1.0
 
 # ---- V2：LLM 配置（任务二十二，模型从业务逻辑抽离）----
-MODEL_PROVIDER = "custom"            # 固定 custom（OpenAI 兼容协议）
-MODEL_NAME = ""                      # 主模型（分类/绑定重排序，从 LLM 设置读取）
-EMBEDDING_MODEL = ""                 # embedding 模型（从 LLM 设置读取）
+MODEL_PROVIDER = "custom"  # 固定 custom（OpenAI 兼容协议）
+MODEL_NAME = ""  # 主模型（分类/绑定重排序，从 LLM 设置读取）
+EMBEDDING_MODEL = ""  # embedding 模型（从 LLM 设置读取）
 LLM_TEMPERATURE = 0.1
 LLM_TIMEOUT = 120
 LLM_MAX_TOKENS = 4000
 # 提示词版本号：改 prompts.py 的绑定 Prompt 时递增（写入 llm_run 审计）
-BINDING_PROMPT_VERSION = "binding-v4"   # v4: 块名↔描述整串近似→强匹配（2026-08-28 绑定增强）
+BINDING_PROMPT_VERSION = "binding-v4"  # v4: 块名↔描述整串近似→强匹配（2026-08-28 绑定增强）
 CLASSIFY_PROMPT_VERSION = "classify-v1"
 # 绑定候选召回参数
-BINDING_TOP_N = 5                    # 规则/LLM 候选上限
-EMBEDDING_TOP_N = 15                 # embedding 语义召回 Top-N（混合召回扩大召回，LLM 再压缩到 BINDING_TOP_N）
+BINDING_TOP_N = 5  # 规则/LLM 候选上限
+EMBEDDING_TOP_N = 15  # embedding 语义召回 Top-N（混合召回扩大召回，LLM 再压缩到 BINDING_TOP_N）
 
 # P2-2：LLM 精排并发（候选生成多 EO 并行调 LLM；仍逐 EO 写 llm_run 审计）
 LLM_BATCH_WORKERS = 2

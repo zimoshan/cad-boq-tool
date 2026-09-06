@@ -5,10 +5,11 @@
   2. 平行线对 → 中心线（避免桥架/风管双边界双倍计量）
   3. HATCH 多环、孔洞（shoelace 多边形面积）
 """
+
 from __future__ import annotations
 
 import math
-from typing import Sequence
+from collections.abc import Sequence
 
 
 def spline_arc_length(
@@ -23,8 +24,7 @@ def spline_arc_length(
     """
     if len(points) != 4:
         return sum(
-            math.hypot(points[i + 1][0] - points[i][0], points[i + 1][1] - points[i][1])
-            for i in range(len(points) - 1)
+            math.hypot(points[i + 1][0] - points[i][0], points[i + 1][1] - points[i][1]) for i in range(len(points) - 1)
         )
 
     p0, p1, p2, p3 = [tuple(p) for p in points]
@@ -43,7 +43,7 @@ def spline_arc_length(
         r1 = lerp(q1, q2, t)
         return lerp(r0, r1, t)
 
-    segments = 2 ** iterations
+    segments = 2**iterations
     total = 0.0
     prev = p0
     for i in range(1, segments + 1):

@@ -17,6 +17,7 @@ B2 扩展（v2.0 §2.2）：解析时填 6 个新字段
   - installed_qty: 已安装数量（G 列）
   - qty_remaining: 剩余数量（H 列 = bill - installed）
 """
+
 from __future__ import annotations
 
 import re
@@ -25,7 +26,6 @@ import openpyxl
 
 from ..config import BOQ_HEADER_CANDIDATES
 from ..models import BoqItem
-
 
 # =============================================================================
 # B1 修复：4 种专业 BOQ 表头识别
@@ -42,8 +42,15 @@ HEADER_PROBE_ROWS = 16
 
 # 关键表头标识（出现任一即视为表头行）
 HEADER_KEYWORDS = (
-    "item", "description", "unit", "qty", "bill",
-    "section", "subtotal", "total", "amount",
+    "item",
+    "description",
+    "unit",
+    "qty",
+    "bill",
+    "section",
+    "subtotal",
+    "total",
+    "amount",
 )
 
 
@@ -54,7 +61,7 @@ def _normalize(s: str) -> str:
 def _row_looks_like_header(row_values: tuple) -> bool:
     """判断一行是否像 BOQ 表头（含 Item + Description 等关键词）"""
     norm_cells = [_normalize(v) for v in row_values if v is not None]
-    text = " ".join(norm_cells)
+    " ".join(norm_cells)
     has_item = any("item" in c for c in norm_cells)
     has_desc = any("description" in c or "desc" in c for c in norm_cells)
     return has_item and has_desc
@@ -96,9 +103,18 @@ def _is_skippable_contract_text(text: str) -> bool:
     t = text.strip()
     if len(t) < 100:
         return False
-    cues = ("Contractor", "Quantities are taken", "Qty remaining", "Material status",
-            "Brand is", "Brand has", "Item descriptions", "Rates are to include",
-            "Overhead, profit", "design drawings form part of this Bill")
+    cues = (
+        "Contractor",
+        "Quantities are taken",
+        "Qty remaining",
+        "Material status",
+        "Brand is",
+        "Brand has",
+        "Item descriptions",
+        "Rates are to include",
+        "Overhead, profit",
+        "design drawings form part of this Bill",
+    )
     return any(c in t for c in cues)
 
 
@@ -131,11 +147,27 @@ def _detect_section(prev_rows: list[tuple], current_row: tuple) -> str:
         text = " ".join(str(c).strip() for c in prev if c is not None).strip()
         if 3 < len(text) < 50 and not _row_looks_like_header(prev):
             # 可能是分部标题
-            if any(kw in text.upper() for kw in (
-                "CABLE", "LIGHTING", "CONDUIT", "FIRE", "HVAC", "PLUMBING",
-                "POWER", "EARTHING", "CONCRETE", "STEEL", "MASONRY", "FINISHES",
-                "MECHANICAL", "ELECTRICAL", "DRAINAGE", "WIRING",
-            )):
+            if any(
+                kw in text.upper()
+                for kw in (
+                    "CABLE",
+                    "LIGHTING",
+                    "CONDUIT",
+                    "FIRE",
+                    "HVAC",
+                    "PLUMBING",
+                    "POWER",
+                    "EARTHING",
+                    "CONCRETE",
+                    "STEEL",
+                    "MASONRY",
+                    "FINISHES",
+                    "MECHANICAL",
+                    "ELECTRICAL",
+                    "DRAINAGE",
+                    "WIRING",
+                )
+            ):
                 return text
     return ""
 
@@ -167,7 +199,7 @@ def parse_boq(path: str) -> tuple[list, dict]:
         mapping = {"code": 0, "description": 1, "unit": 2}
 
     items = []
-    for row_idx, row in enumerate(rows[header_idx + 1:], start=header_idx + 2):
+    for row_idx, row in enumerate(rows[header_idx + 1 :], start=header_idx + 2):
         # 跳过全空行
         if all(v is None or str(v).strip() == "" for v in row):
             continue
@@ -205,20 +237,22 @@ def parse_boq(path: str) -> tuple[list, dict]:
         installed_qty = _to_float(_cell("installed_qty", 0))
         qty_remaining = _to_float(_cell("qty_remaining", 0)) or (bill_qty - installed_qty)
         # 分部检测（前 3 行）
-        section = _detect_section(rows[max(0, row_idx - 3 - 1):row_idx - 1], row)
+        section = _detect_section(rows[max(0, row_idx - 3 - 1) : row_idx - 1], row)
 
-        items.append(BoqItem(
-            row_index=row_idx,
-            code=code or f"item-{len(items) + 1}",
-            description=desc,
-            unit=str(unit) if unit else "",
-            original_qty=qty,
-            section=section,
-            item_key=item_key,
-            brand=brand,
-            bill_qty=bill_qty,
-            installed_qty=installed_qty,
-            qty_remaining=qty_remaining,
-        ))
+        items.append(
+            BoqItem(
+                row_index=row_idx,
+                code=code or f"item-{len(items) + 1}",
+                description=desc,
+                unit=str(unit) if unit else "",
+                original_qty=qty,
+                section=section,
+                item_key=item_key,
+                brand=brand,
+                bill_qty=bill_qty,
+                installed_qty=installed_qty,
+                qty_remaining=qty_remaining,
+            )
+        )
 
     return items, mapping

@@ -1,4 +1,5 @@
 """Excel 报表导出：依据图纸的算量清单（与原 BOQ 对比）"""
+
 from __future__ import annotations
 
 import logging
@@ -13,9 +14,14 @@ from . import db, measure
 logger = logging.getLogger(__name__)
 
 
-def export_report(project_id: int, sheet_id: int, out_path: str,
-                  sheet_scale: float = 1.0, project_scale: float = 1.0,
-                  use_measured: bool = False) -> int:
+def export_report(
+    project_id: int,
+    sheet_id: int,
+    out_path: str,
+    sheet_scale: float = 1.0,
+    project_scale: float = 1.0,
+    use_measured: bool = False,
+) -> int:
     """导出算量清单。返回导出行数
 
     Args:
@@ -37,8 +43,8 @@ def export_report(project_id: int, sheet_id: int, out_path: str,
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal="center", vertical="center")
 
-    red_fill = PatternFill("solid", fgColor="F8CBAD")   # 超出 → 红
-    green_fill = PatternFill("solid", fgColor="C6EFCE") # 不足 → 绿
+    red_fill = PatternFill("solid", fgColor="F8CBAD")  # 超出 → 红
+    green_fill = PatternFill("solid", fgColor="C6EFCE")  # 不足 → 绿
 
     row = 2
     for item in items:
@@ -46,14 +52,13 @@ def export_report(project_id: int, sheet_id: int, out_path: str,
         qty = result["qty"]
         if use_measured:
             mq = getattr(item, "measured_qty", 0) or 0
-            qty = mq if mq else qty   # 有实测值用实测，无则退回实时计算
+            qty = mq if mq else qty  # 有实测值用实测，无则退回实时计算
         orig = item.original_qty or 0.0
         diff = round(qty - orig, 4)
         modes = sorted({m.mode for m in db.get_mappings(item.id, sheet_id)})
         mode_str = ",".join(modes) if modes else ""
 
-        vals = [item.code, item.description, item.unit, qty, orig if orig else "", diff,
-                mode_str, result["factor"]]
+        vals = [item.code, item.description, item.unit, qty, orig if orig else "", diff, mode_str, result["factor"]]
         for c, v in enumerate(vals, start=1):
             ws.cell(row=row, column=c, value=v)
 
@@ -71,14 +76,15 @@ def export_report(project_id: int, sheet_id: int, out_path: str,
 
     wb.save(out_path)
     elapsed = (time.perf_counter() - started) * 1000
-    logger.info("export_report: project_id=%s sheet_id=%s items=%d elapsed_ms=%.1f", project_id, sheet_id, row - 2, elapsed)
+    logger.info(
+        "export_report: project_id=%s sheet_id=%s items=%d elapsed_ms=%.1f", project_id, sheet_id, row - 2, elapsed
+    )
     return row - 2
 
 
-def export_materials(project_id: int, out_path: str,
-                     wire_keywords: tuple = None,
-                     get_spec_fn=None,
-                     rates: dict = None) -> int:
+def export_materials(
+    project_id: int, out_path: str, wire_keywords: tuple = None, get_spec_fn=None, rates: dict = None
+) -> int:
     """导出「主要材料表」：设备（块计数）+ 导线（图层长度）→ 一张 Excel。
 
     结构（单 sheet，上下两区）：
@@ -98,6 +104,7 @@ def export_materials(project_id: int, out_path: str,
         导出总行数（设备+导线）
     """
     from . import db
+
     started = time.perf_counter()
     data = db.summarize_materials(project_id, wire_keywords=wire_keywords or ())
     wb = Workbook()
@@ -128,16 +135,24 @@ def export_materials(project_id: int, out_path: str,
     row += 1
 
     # 导线区
-    wire_headers = ["大类", "名称（图层）", "规格/型号", "原始长度", "换算率",
-                    "换算后长度", "实体数", "出现图纸", "备注"]
+    wire_headers = [
+        "大类",
+        "名称（图层）",
+        "规格/型号",
+        "原始长度",
+        "换算率",
+        "换算后长度",
+        "实体数",
+        "出现图纸",
+        "备注",
+    ]
     for c, h in enumerate(wire_headers, start=1):
         cell = ws.cell(row=row, column=c, value=h)
         cell.font = header_font
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal="center", vertical="center")
     # 换算提醒标记（表头旁）
-    cell = ws.cell(row=row, column=len(wire_headers) + 1,
-                   value="⚠ 原始长度未自动换算，请按图例比例人工换算")
+    cell = ws.cell(row=row, column=len(wire_headers) + 1, value="⚠ 原始长度未自动换算，请按图例比例人工换算")
     cell.font = warn_font
     row += 1
 
@@ -145,10 +160,17 @@ def export_materials(project_id: int, out_path: str,
     for w in data["wires"]:
         spec = get_spec_fn("layer", w["layer_name"]) if get_spec_fn else ""
         rate = rates.get(w["layer_name"], 1.0)
-        vals = ["导线", w["layer_name"], spec,
-                round(w["length_raw"], 2), rate,
-                round(w["length_raw"] * rate, 2),
-                w["entity_count"], w["sheet_count"], ""]
+        vals = [
+            "导线",
+            w["layer_name"],
+            spec,
+            round(w["length_raw"], 2),
+            rate,
+            round(w["length_raw"] * rate, 2),
+            w["entity_count"],
+            w["sheet_count"],
+            "",
+        ]
         for c, v in enumerate(vals, start=1):
             ws.cell(row=row, column=c, value=v)
         row += 1
@@ -160,8 +182,13 @@ def export_materials(project_id: int, out_path: str,
     wb.save(out_path)
     total = len(data["devices"]) + len(data["wires"])
     elapsed = (time.perf_counter() - started) * 1000
-    logger.info("export_materials: project_id=%s devices=%d wires=%d elapsed_ms=%.1f",
-                project_id, len(data["devices"]), len(data["wires"]), elapsed)
+    logger.info(
+        "export_materials: project_id=%s devices=%d wires=%d elapsed_ms=%.1f",
+        project_id,
+        len(data["devices"]),
+        len(data["wires"]),
+        elapsed,
+    )
     return total
 
 
@@ -195,8 +222,12 @@ def export_items_to_excel(items: list, out_path: str) -> int:
         conf = it.confidence
         is_conflict = it.raw.get("_conflict", False)
         vals = [
-            it.code, it.description, it.unit, round(it.quantity, 4),
-            f"{conf:.0%}", it.source_layer or it.source_block or "-",
+            it.code,
+            it.description,
+            it.unit,
+            round(it.quantity, 4),
+            f"{conf:.0%}",
+            it.source_layer or it.source_block or "-",
             (it.reasoning or "")[:200],
             "是" if is_conflict else "",
         ]

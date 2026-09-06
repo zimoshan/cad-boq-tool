@@ -10,15 +10,16 @@ V2 配置中心接入（任务二十九 P3）：
 - 主 backend 跑出来后若全部候选 confidence < quality_threshold 且启用 fallback，
   自动切换 fallback backend 重跑一次，task_type 标记 'binding-fallback' 写审计。
 """
+
 from __future__ import annotations
 
 import time
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from .. import config
+from ..takeoff.llm_backends import LLMBackend, LLMConfig, create_backend
 from . import audit
 from .settings import load_active
-from ..takeoff.llm_backends import (LLMConfig, create_backend, LLMBackend)
 
 
 # ----- 内部辅助 -----
@@ -36,6 +37,7 @@ def llm_available(timeout: float = 2.0) -> bool:
     backend = llmc.primary_backend
     if backend == "ollama":
         import urllib.request
+
         host = (llmc.ollama_host or "").rstrip("/")
         if not host:
             return False
@@ -51,8 +53,7 @@ def llm_available(timeout: float = 2.0) -> bool:
     return bool(llmc.api_keys.get(backend))
 
 
-def _resolve_backend(llmc: LLMConfig, override_model: str = None,
-                     override_host: str = None) -> LLMBackend:
+def _resolve_backend(llmc: LLMConfig, override_model: str = None, override_host: str = None) -> LLMBackend:
     """从 LLMConfig 工厂创建 backend 实例；可被入参 override_model/host 临时覆盖。"""
     backend = create_backend(llmc.primary_backend, llmc)
     if override_model:
@@ -71,15 +72,35 @@ def _resolve_runtime(task_type: str = "binding"):
     return llmc, fb, llmc.quality_threshold
 
 
-def _audit_run(project_id: int, task_type: str, model: str, prompt_version: str,
-               temperature: float, input_text: str, content: str,
-               duration_ms: int, token_in: int, token_out: int,
-               status: str, error: str = "") -> int:
+def _audit_run(
+    project_id: int,
+    task_type: str,
+    model: str,
+    prompt_version: str,
+    temperature: float,
+    input_text: str,
+    content: str,
+    duration_ms: int,
+    token_in: int,
+    token_out: int,
+    status: str,
+    error: str = "",
+) -> int:
     """统一审计入口；失败也允许记录。"""
     return audit.log_llm_call(
-        project_id, task_type, model, prompt_version, temperature,
-        input_text, content, duration_ms, token_in, token_out,
-        status=status, error=error)
+        project_id,
+        task_type,
+        model,
+        prompt_version,
+        temperature,
+        input_text,
+        content,
+        duration_ms,
+        token_in,
+        token_out,
+        status=status,
+        error=error,
+    )
 
 
 # ----- 主入口：与原签名 100% 兼容 -----
@@ -88,7 +109,7 @@ def run_llm_with_retry(
     task_type: str,
     system: str,
     user: str,
-    validator: Optional[Callable[[str], object]] = None,
+    validator: Callable[[str], object] | None = None,
     model: str = None,
     host: str = None,
     temperature: float = None,
@@ -120,7 +141,7 @@ def run_llm_with_retry(
 
     for attempt in range(retries + 1):
         attempts = attempt + 1
-        prompt_text = (system + "\n" + user)
+        prompt_text = system + "\n" + user
         t0 = time.time()
         try:
             resp = backend.chat(system, user)
@@ -128,9 +149,19 @@ def run_llm_with_retry(
             last_error = str(e)
             duration = int((time.time() - t0) * 1000)
             run_id = _audit_run(
-                project_id, task_type, backend.model, prompt_version, temperature,
-                prompt_text, "", duration, 0, 0,
-                status="error", error=last_error)
+                project_id,
+                task_type,
+                backend.model,
+                prompt_version,
+                temperature,
+                prompt_text,
+                "",
+                duration,
+                0,
+                0,
+                status="error",
+                error=last_error,
+            )
             run_ids.append(run_id)
             continue
 
@@ -151,19 +182,33 @@ def run_llm_with_retry(
                 user = user + f"\n\n# 上次输出未通过校验：{last_error[:200]}\n请重新输出严格 JSON。"
 
         run_id = _audit_run(
-            project_id, task_type, backend.model, prompt_version, temperature,
-            prompt_text, content, duration, tokens_in, tokens_out,
+            project_id,
+            task_type,
+            backend.model,
+            prompt_version,
+            temperature,
+            prompt_text,
+            content,
+            duration,
+            tokens_in,
+            tokens_out,
             status="ok" if valid else "retried" if attempt < retries else "error",
-            error="" if valid else last_error)
+            error="" if valid else last_error,
+        )
         run_ids.append(run_id)
 
         if valid:
             return {
-                "content": content, "parsed": parsed, "run_ids": run_ids,
-                "attempts": attempts, "ok": True,
-                "backend": llmc.primary_backend, "model": backend.model,
+                "content": content,
+                "parsed": parsed,
+                "run_ids": run_ids,
+                "attempts": attempts,
+                "ok": True,
+                "backend": llmc.primary_backend,
+                "model": backend.model,
                 "used_fallback": False,
-                "tokens_in": tokens_in, "tokens_out": tokens_out,
+                "tokens_in": tokens_in,
+                "tokens_out": tokens_out,
             }
 
     # 主 backend 没成功 → 触发 fallback
@@ -180,6 +225,7 @@ def run_llm_with_retry(
         # 简单策略：fallback backend 自己用的 model = 它在 settings 表里的字段
         # 我们反向从 db 拉一次（确保用最新字段）
         from .. import db as _db
+
         settings = _db.get_llm_settings()
         fallback_model_map = {
             "ollama": settings.get("ollama_model", "") or "qwen2.5:7b",
@@ -188,7 +234,9 @@ def run_llm_with_retry(
             "deepseek": settings.get("deepseek_model", "") or "deepseek-chat",
             "custom": settings.get("custom_model", "") or (llmc.custom_endpoints.get("custom") or {}).get("model", ""),
         }
-        fallback_model = fallback_model_map.get(fallback_backend_name, model_for.get(fallback_backend_name, "gpt-4o-mini"))
+        fallback_model = fallback_model_map.get(
+            fallback_backend_name, model_for.get(fallback_backend_name, "gpt-4o-mini")
+        )
 
         fb_llmc = LLMConfig(
             primary_backend=fallback_backend_name,
@@ -198,7 +246,7 @@ def run_llm_with_retry(
             fallback_model=None,
             api_keys=llmc.api_keys,
             custom_endpoints=llmc.custom_endpoints,
-            auto_fallback=False,   # fallback 不再 fallback
+            auto_fallback=False,  # fallback 不再 fallback
             quality_threshold=threshold,
         )
         fb_backend = create_backend(fallback_backend_name, fb_llmc)
@@ -213,9 +261,19 @@ def run_llm_with_retry(
             except Exception as e:  # noqa: BLE001
                 last_error = str(e)
                 run_id = _audit_run(
-                    project_id, task_type + "-fallback", fb_backend.model, prompt_version,
-                    temperature, system + "\n" + retry_user, "",
-                    int((time.time() - t0) * 1000), 0, 0, status="error", error=last_error)
+                    project_id,
+                    task_type + "-fallback",
+                    fb_backend.model,
+                    prompt_version,
+                    temperature,
+                    system + "\n" + retry_user,
+                    "",
+                    int((time.time() - t0) * 1000),
+                    0,
+                    0,
+                    status="error",
+                    error=last_error,
+                )
                 run_ids.append(run_id)
                 continue
             duration = int((time.time() - t0) * 1000)
@@ -234,26 +292,45 @@ def run_llm_with_retry(
                     retry_user = retry_user + f"\n\n# 上次输出未通过校验：{last_error[:200]}\n请重新输出严格 JSON。"
 
             run_id = _audit_run(
-                project_id, task_type + "-fallback", fb_backend.model, prompt_version,
-                temperature, system + "\n" + retry_user, content,
-                duration, tokens_in, tokens_out,
+                project_id,
+                task_type + "-fallback",
+                fb_backend.model,
+                prompt_version,
+                temperature,
+                system + "\n" + retry_user,
+                content,
+                duration,
+                tokens_in,
+                tokens_out,
                 status="ok" if valid else "retried" if attempt < retries else "error",
-                error="" if valid else last_error)
+                error="" if valid else last_error,
+            )
             run_ids.append(run_id)
 
             if valid:
                 return {
-                    "content": content, "parsed": parsed, "run_ids": run_ids,
-                    "attempts": attempts + attempts_fb, "ok": True,
-                    "backend": fallback_backend_name, "model": fb_backend.model,
+                    "content": content,
+                    "parsed": parsed,
+                    "run_ids": run_ids,
+                    "attempts": attempts + attempts_fb,
+                    "ok": True,
+                    "backend": fallback_backend_name,
+                    "model": fb_backend.model,
                     "used_fallback": True,
-                    "tokens_in": tokens_in, "tokens_out": tokens_out,
+                    "tokens_in": tokens_in,
+                    "tokens_out": tokens_out,
                 }
 
     return {
-        "content": "", "parsed": None, "run_ids": run_ids,
+        "content": "",
+        "parsed": None,
+        "run_ids": run_ids,
         "attempts": attempts + (attempts_fb if fallback_backend_name else 0),
-        "ok": False, "backend": llmc.primary_backend, "model": backend.model,
+        "ok": False,
+        "backend": llmc.primary_backend,
+        "model": backend.model,
         "used_fallback": bool(fallback_backend_name),
-        "tokens_in": tokens_in, "tokens_out": tokens_out, "error": last_error,
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+        "error": last_error,
     }

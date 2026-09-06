@@ -6,12 +6,13 @@ Phase 22A-1：
 - 0 依赖 0 GPU，秒级出结果
 - 用于喂给 LLM 做分类/命名（不让 LLM 算数值）
 """
+
 from __future__ import annotations
 
 import re
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Iterable
 
 from ..cad.cad_parser import ParsedDrawing
 
@@ -19,33 +20,36 @@ from ..cad.cad_parser import ParsedDrawing
 @dataclass
 class LayerSummary:
     """单图层汇总"""
+
     name: str
     entity_count: int = 0
-    type_breakdown: dict = field(default_factory=dict)   # {"LWPOLYLINE": 65, "LINE": 22}
+    type_breakdown: dict = field(default_factory=dict)  # {"LWPOLYLINE": 65, "LINE": 22}
     total_length_mm: float = 0.0
     total_area_mm2: float = 0.0
-    bbox: tuple = (0, 0, 0, 0)                           # (min_x, min_y, max_x, max_y) mm
-    sample_texts: list = field(default_factory=list)       # 典型尺寸文本
-    sample_handles: list = field(default_factory=list)     # 样例 handle（debug 用）
+    bbox: tuple = (0, 0, 0, 0)  # (min_x, min_y, max_x, max_y) mm
+    sample_texts: list = field(default_factory=list)  # 典型尺寸文本
+    sample_handles: list = field(default_factory=list)  # 样例 handle（debug 用）
 
 
 @dataclass
 class RegionSummary:
     """空间分区汇总（50m × 50m 网格）"""
-    grid_id: tuple = (0, 0)            # (gx, gy) 网格坐标
+
+    grid_id: tuple = (0, 0)  # (gx, gy) 网格坐标
     bbox: tuple = (0, 0, 0, 0)
-    layer_summaries: dict = field(default_factory=dict)    # layer_name -> LayerSummary
-    block_inserts: dict = field(default_factory=dict)      # block_name -> count
+    layer_summaries: dict = field(default_factory=dict)  # layer_name -> LayerSummary
+    block_inserts: dict = field(default_factory=dict)  # block_name -> count
 
 
 @dataclass
 class AggregatedDrawing:
     """全图汇总（喂 LLM 用）"""
+
     drawing_bbox: tuple = (0, 0, 0, 0)
-    layers: list = field(default_factory=list)              # list[LayerSummary]
-    regions: list = field(default_factory=list)             # list[RegionSummary]
-    block_inserts: dict = field(default_factory=dict)      # block_name -> count
-    typical_sizes: list = field(default_factory=list)       # ["DN100", "Φ50", ...]
+    layers: list = field(default_factory=list)  # list[LayerSummary]
+    regions: list = field(default_factory=list)  # list[RegionSummary]
+    block_inserts: dict = field(default_factory=dict)  # block_name -> count
+    typical_sizes: list = field(default_factory=list)  # ["DN100", "Φ50", ...]
     project_name: str = ""
 
     def to_llm_dict(self) -> dict:
@@ -71,18 +75,21 @@ class AggregatedDrawing:
 # 典型尺寸正则：DN100 / DN150 / Φ50 / 1000x500 / 800X400 等
 SIZE_PATTERNS = [
     # 电缆型号 + 芯数×截面积（如 NHXMH 4x1.5 / NH-YJV 3x35+1x16），放最前优先命中
-    re.compile(r"(?:NHXMH|NH-YJV|NH-YJY|WDZ-YJY|WDZ-YJE|ZR-YJV|ZR-YJY|YJV|YJY|BVR|BYJ|RVVP|RVV|RVS|KYJV|KVV|DJYPVP)"
-               r"\s*\d{1,2}\s*[xX×]\s*\d{1,2}(?:\.\d+)?"
-               r"(?:\s*\+\s*\d{1,2}\s*[xX×]\s*\d{1,2}(?:\.\d+)?)*", re.IGNORECASE),
+    re.compile(
+        r"(?:NHXMH|NH-YJV|NH-YJY|WDZ-YJY|WDZ-YJE|ZR-YJV|ZR-YJY|YJV|YJY|BVR|BYJ|RVVP|RVV|RVS|KYJV|KVV|DJYPVP)"
+        r"\s*\d{1,2}\s*[xX×]\s*\d{1,2}(?:\.\d+)?"
+        r"(?:\s*\+\s*\d{1,2}\s*[xX×]\s*\d{1,2}(?:\.\d+)?)*",
+        re.IGNORECASE,
+    ),
     # 通用 芯数×截面积 NxS（含小数如 4x1.5）；(?<!\d)/(?!\d) 防止把 1000x500 误切为 10x50
     re.compile(r"(?<!\d)(\d{1,2})\s*[xX×]\s*(\d{1,2}(?:\.\d+)?)(?!\d)", re.IGNORECASE),
-    re.compile(r"DN\s*(\d{2,4})", re.IGNORECASE),     # DN100
-    re.compile(r"Φ\s*(\d{2,4})"),                     # Φ50
-    re.compile(r"(\d{2,4})\s*[xX×]\s*(\d{2,4})"),      # 1000x500
-    re.compile(r"(\d{2,4})mm"),                        # 100mm
-    re.compile(r"(\d{1,3})\s*/\s*(\d{1,3})"),          # 100/150 (管径/长度)
-    re.compile(r"SC\s*(\d{1,3})", re.IGNORECASE),     # SC20 (电气导管)
-    re.compile(r"(\d{2,4})mm\s*²", re.IGNORECASE),    # 100mm²
+    re.compile(r"DN\s*(\d{2,4})", re.IGNORECASE),  # DN100
+    re.compile(r"Φ\s*(\d{2,4})"),  # Φ50
+    re.compile(r"(\d{2,4})\s*[xX×]\s*(\d{2,4})"),  # 1000x500
+    re.compile(r"(\d{2,4})mm"),  # 100mm
+    re.compile(r"(\d{1,3})\s*/\s*(\d{1,3})"),  # 100/150 (管径/长度)
+    re.compile(r"SC\s*(\d{1,3})", re.IGNORECASE),  # SC20 (电气导管)
+    re.compile(r"(\d{2,4})mm\s*²", re.IGNORECASE),  # 100mm²
 ]
 
 
@@ -123,13 +130,18 @@ def _map_chunk(entities, grid_size_mm: float):
         ls.total_length_mm += e.length or 0
         ls.total_area_mm2 += e.area or 0
         bx0, by0, bx1, by1 = e.bbox
-        if bx0 < drawing_bbox[0]: drawing_bbox[0] = bx0
-        if by0 < drawing_bbox[1]: drawing_bbox[1] = by0
-        if bx1 > drawing_bbox[2]: drawing_bbox[2] = bx1
-        if by1 > drawing_bbox[3]: drawing_bbox[3] = by1
+        if bx0 < drawing_bbox[0]:
+            drawing_bbox[0] = bx0
+        if by0 < drawing_bbox[1]:
+            drawing_bbox[1] = by0
+        if bx1 > drawing_bbox[2]:
+            drawing_bbox[2] = bx1
+        if by1 > drawing_bbox[3]:
+            drawing_bbox[3] = by1
         # 采样尺寸文本（TEXT/MTEXT）
         if e.dxf_type in ("TEXT", "MTEXT"):
             import json
+
             try:
                 g = json.loads(e.geom_json)
                 if "text" in g and g["text"]:
@@ -153,10 +165,14 @@ def _map_chunk(entities, grid_size_mm: float):
             if rs.bbox == (0, 0, 0, 0):
                 rs.bbox = (bx0, by0, bx1, by1)
             else:
-                if bx0 < rx0: rs.bbox = (bx0, rs.bbox[1], rs.bbox[2], rs.bbox[3])
-                if by0 < ry0: rs.bbox = (rs.bbox[0], by0, rs.bbox[2], rs.bbox[3])
-                if bx1 > rx1: rs.bbox = (rs.bbox[0], rs.bbox[1], bx1, rs.bbox[3])
-                if by1 > ry1: rs.bbox = (rs.bbox[0], rs.bbox[1], rs.bbox[2], by1)
+                if bx0 < rx0:
+                    rs.bbox = (bx0, rs.bbox[1], rs.bbox[2], rs.bbox[3])
+                if by0 < ry0:
+                    rs.bbox = (rs.bbox[0], by0, rs.bbox[2], rs.bbox[3])
+                if bx1 > rx1:
+                    rs.bbox = (rs.bbox[0], rs.bbox[1], bx1, rs.bbox[3])
+                if by1 > ry1:
+                    rs.bbox = (rs.bbox[0], rs.bbox[1], rs.bbox[2], by1)
             rls = rs.layer_summaries.get(e.layer)
             if rls is None:
                 rls = LayerSummary(name=e.layer)
@@ -189,7 +205,7 @@ def _merge_accumulators(accumulators):
             tgt.total_length_mm += ls.total_length_mm
             tgt.total_area_mm2 += ls.total_area_mm2
             tgt.sample_texts.extend(ls.sample_texts[:10])
-            tgt.sample_handles.extend(ls.sample_handles[:5 - len(tgt.sample_handles)])
+            tgt.sample_handles.extend(ls.sample_handles[: 5 - len(tgt.sample_handles)])
         # 合并区域
         for key, rs in ra.items():
             tgt = region_acc.get(key)
@@ -201,10 +217,12 @@ def _merge_accumulators(accumulators):
                 if tgt.bbox == (0, 0, 0, 0):
                     tgt.bbox = rs.bbox
                 else:
-                    tgt.bbox = (min(tgt.bbox[0], rs.bbox[0]),
-                                min(tgt.bbox[1], rs.bbox[1]),
-                                max(tgt.bbox[2], rs.bbox[2]),
-                                max(tgt.bbox[3], rs.bbox[3]))
+                    tgt.bbox = (
+                        min(tgt.bbox[0], rs.bbox[0]),
+                        min(tgt.bbox[1], rs.bbox[1]),
+                        max(tgt.bbox[2], rs.bbox[2]),
+                        max(tgt.bbox[3], rs.bbox[3]),
+                    )
             for layer_name, rls in rs.layer_summaries.items():
                 tgt_rls = tgt.layer_summaries.get(layer_name)
                 if tgt_rls is None:
@@ -216,16 +234,19 @@ def _merge_accumulators(accumulators):
             for bname, c in rs.block_inserts.items():
                 tgt.block_inserts[bname] = tgt.block_inserts.get(bname, 0) + c
         # 合并全图 bbox
-        if bb[0] < drawing_bbox[0]: drawing_bbox[0] = bb[0]
-        if bb[1] < drawing_bbox[1]: drawing_bbox[1] = bb[1]
-        if bb[2] > drawing_bbox[2]: drawing_bbox[2] = bb[2]
-        if bb[3] > drawing_bbox[3]: drawing_bbox[3] = bb[3]
+        if bb[0] < drawing_bbox[0]:
+            drawing_bbox[0] = bb[0]
+        if bb[1] < drawing_bbox[1]:
+            drawing_bbox[1] = bb[1]
+        if bb[2] > drawing_bbox[2]:
+            drawing_bbox[2] = bb[2]
+        if bb[3] > drawing_bbox[3]:
+            drawing_bbox[3] = bb[3]
 
     return layer_acc, region_acc, drawing_bbox
 
 
-def aggregate(drawing: ParsedDrawing, grid_size_mm: float = 50_000,
-              chunk_size: int = 20_000) -> AggregatedDrawing:
+def aggregate(drawing: ParsedDrawing, grid_size_mm: float = 50_000, chunk_size: int = 20_000) -> AggregatedDrawing:
     """主入口：ParsedDrawing → AggregatedDrawing
 
     P2-6 分块 map-reduce：实体按 chunk 切分各自统计（_map_chunk），再合并
@@ -247,9 +268,8 @@ def aggregate(drawing: ParsedDrawing, grid_size_mm: float = 50_000,
         accum = _map_chunk(entities, grid_size_mm)
         layer_acc, region_acc, bbox = accum
     else:
-        chunks = [entities[i:i + chunk_size] for i in range(0, len(entities), chunk_size)]
-        layer_acc, region_acc, bbox = _merge_accumulators(
-            [_map_chunk(c, grid_size_mm) for c in chunks])
+        chunks = [entities[i : i + chunk_size] for i in range(0, len(entities), chunk_size)]
+        layer_acc, region_acc, bbox = _merge_accumulators([_map_chunk(c, grid_size_mm) for c in chunks])
 
     drawing_bbox = tuple(bbox) if bbox[0] != float("inf") else (0, 0, 0, 0)
 

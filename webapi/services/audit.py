@@ -1,13 +1,11 @@
 """audit 域 service（Phase 2.2 包装 app.llm.audit + 业务期统计查询）"""
+
 from __future__ import annotations
 
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.llm.audit import log_llm_call
-from webapi.services.base import ServiceError
 
 
 async def list_llm_runs(
@@ -36,10 +34,18 @@ async def get_overview(
     完整 dataviz 集成留 Phase 6 跨专业总览页
     """
     sql_boq = text("SELECT COUNT(*) AS n FROM boq_item WHERE project_id = :pid")
-    sql_eo = text("SELECT COUNT(*) AS n, object_type, discipline FROM engineering_object WHERE project_id = :pid GROUP BY object_type, discipline")
-    sql_mapping = text("SELECT COUNT(*) AS n FROM mapping WHERE boq_item_id IN (SELECT id FROM boq_item WHERE project_id = :pid)")
-    sql_writeback = text("SELECT takability, COUNT(*) AS n FROM writeback_audit WHERE project_id = :pid GROUP BY takability")
-    sql_runs = text("SELECT task_type, COUNT(*) AS n, AVG(duration_ms) AS avg_ms FROM llm_run WHERE project_id = :pid GROUP BY task_type")
+    sql_eo = text(
+        "SELECT COUNT(*) AS n, object_type, discipline FROM engineering_object WHERE project_id = :pid GROUP BY object_type, discipline"
+    )
+    sql_mapping = text(
+        "SELECT COUNT(*) AS n FROM mapping WHERE boq_item_id IN (SELECT id FROM boq_item WHERE project_id = :pid)"
+    )
+    sql_writeback = text(
+        "SELECT takability, COUNT(*) AS n FROM writeback_audit WHERE project_id = :pid GROUP BY takability"
+    )
+    sql_runs = text(
+        "SELECT task_type, COUNT(*) AS n, AVG(duration_ms) AS avg_ms FROM llm_run WHERE project_id = :pid GROUP BY task_type"
+    )
 
     boq_count = (await db.execute(sql_boq, {"pid": project_id})).scalar() or 0
     mapping_count = (await db.execute(sql_mapping, {"pid": project_id})).scalar() or 0
@@ -71,7 +77,9 @@ async def get_precheck(
     drawing_type_breakdown = [dict(r._mapping) for r in (await db.execute(sql_dt, {"pid": project_id}))]
 
     # 2. takability 6 状态
-    sql_tk = text("""SELECT takability, COUNT(*) AS n FROM writeback_audit WHERE project_id = :pid GROUP BY takability""")
+    sql_tk = text(
+        """SELECT takability, COUNT(*) AS n FROM writeback_audit WHERE project_id = :pid GROUP BY takability"""
+    )
     takability_breakdown = [dict(r._mapping) for r in (await db.execute(sql_tk, {"pid": project_id}))]
 
     # 3. coverage：mapping 数 / boq_item 数
@@ -98,7 +106,9 @@ async def get_precheck(
     }
 
     # 5. version：revision 分布
-    sql_ver = text("""SELECT revision, COUNT(*) AS n FROM sheet WHERE project_id = :pid AND revision != '' GROUP BY revision""")
+    sql_ver = text(
+        """SELECT revision, COUNT(*) AS n FROM sheet WHERE project_id = :pid AND revision != '' GROUP BY revision"""
+    )
     version_breakdown = [dict(r._mapping) for r in (await db.execute(sql_ver, {"pid": project_id}))]
 
     # 6. provisional：remark 含 [PROVISIONAL] 的 boq_item 数

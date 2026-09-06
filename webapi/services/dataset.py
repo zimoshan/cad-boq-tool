@@ -5,6 +5,7 @@ Phase 1：PG test_data_registry 表为主，JSON 作本地 fallback
 
 #3 决策：DWG/数据资产不自动入库，用户手动标记后存此表。
 """
+
 from __future__ import annotations
 
 import json
@@ -12,24 +13,22 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import Boolean, DateTime, Integer, String, Text, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Mapped, mapped_column
 
 from webapi.config import get_settings
-from webapi.services.base import ServiceError
-
 
 # =============================================================================
 # P1-2 ORM Model（同步 alembic 0003 迁移）
 # =============================================================================
-
 from webapi.db.base import Base
-from sqlalchemy import Boolean, DateTime, Integer, String, Text, func
-from sqlalchemy.orm import Mapped, mapped_column
+from webapi.services.base import ServiceError
 
 
 class TestDataRegistry(Base):
     """测试数据注册表（alembic 0003）"""
+
     __tablename__ = "test_data_registry"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -71,6 +70,7 @@ def _write_json(data: dict[str, Any]) -> None:
 
 
 # ---------- DB 后端（PG 优先） ----------
+
 
 async def list_entries_db(db: AsyncSession) -> list[dict[str, Any]]:
     result = await db.execute(select(TestDataRegistry).order_by(TestDataRegistry.created_at.desc()))
@@ -156,6 +156,7 @@ async def get_active_entries_db(db: AsyncSession) -> list[dict[str, Any]]:
 
 # ---------- JSON 后端（本地 fallback，向后兼容） ----------
 
+
 def list_entries_json() -> list[dict[str, Any]]:
     return _read_json().get("entries", [])
 
@@ -199,8 +200,6 @@ def get_active_entries_json() -> list[dict[str, Any]]:
 
 
 # ---------- v1.0 §8 manifest JSON 读取/校验 ----------
-
-from webapi.config import get_settings
 
 
 def load_manifest(dataset_id: str | None = None) -> dict[str, Any] | None:
@@ -292,6 +291,7 @@ def update_manifest_field(dataset_id: str, key: str, value: Any) -> dict[str, An
 # ---------- 统一接口（自动选后端，TEST_DATA_BACKEND=db/json，default=json 向后兼容） ----------
 
 import os
+
 
 def _backend() -> str:
     return os.environ.get("TEST_DATA_BACKEND", "json").lower()

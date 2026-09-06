@@ -1,4 +1,5 @@
 """/api/cad 路由（CAD 解析 + 视口查询 + v1.0 §13 4 端点）"""
+
 # 不使用 from __future__ import annotations：Pydantic 2.8 + FastAPI 0.115 forward ref 解析问题
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -67,7 +68,5 @@ async def get_entities(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """v1.0 §13 GET /api/cad/entities：分页列 entity（layer/block/dxf_type 过滤）"""
-    rows = await cad_service.list_entities(
-        db, sheet_id, layer, block_name, dxf_type, limit, offset
-    )
+    rows = await cad_service.list_entities(db, sheet_id, layer, block_name, dxf_type, limit, offset)
     return {"items": rows, "limit": limit, "offset": offset}

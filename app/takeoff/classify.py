@@ -6,11 +6,10 @@ Phase 22A-2：
 - 0 依赖 0 GPU，秒级出结果
 - 用于先于 LLM 跑（节省 LLM 调用）
 """
+
 from __future__ import annotations
 
 import re
-from typing import List, Tuple
-
 
 # 行业常见图层命名规则（基于 CAD 标准 + 广联达 + 鸿业 + 探索者 等）
 LAYER_RULES: dict = {
@@ -59,19 +58,19 @@ LAYER_RULES: dict = {
 
 # 块名分类规则（INSERT 块名）
 BLOCK_RULES: dict = {
-    "阀门":       ["VALVE", "GATE", "BALL", "CHECK", "BUTTERFLY", "阀门"],
-    "传感器":     ["SENSOR", "DETECTOR", "THERMOSTAT", "METER", "传感器"],
-    "喷头":       ["SPRINKLER_HEAD", "SPRINKLER", "PENDENT", "UPRIGHT", "SIDEWALL", "喷头"],
-    "风口":       ["DIFFUSER", "GRILLE", "REGISTER", "风口", "散流器"],
-    "灯具":       ["LIGHT", "LUMINAIRE", "FIXTURE", "灯具", "灯"],
-    "插座":       ["OUTLET", "RECEPTACLE", "插座"],
-    "开关":       ["SWITCH", "开关"],
-    "配电箱":     ["PANEL", "BOARD", "CABINET", "配电箱", "配电柜"],
-    "风机盘管":   ["FCU", "FAN_COIL", "风机盘管"],
-    "水泵":       ["PUMP", "水泵"],
-    "水表":       ["WATER_METER", "METER", "水表"],
-    "地漏":       ["FLOOR_DRAIN", "DRAIN", "地漏"],
-    "检查井":     ["CLEANOUT", "C/O", "检查井", "清扫口"],
+    "阀门": ["VALVE", "GATE", "BALL", "CHECK", "BUTTERFLY", "阀门"],
+    "传感器": ["SENSOR", "DETECTOR", "THERMOSTAT", "METER", "传感器"],
+    "喷头": ["SPRINKLER_HEAD", "SPRINKLER", "PENDENT", "UPRIGHT", "SIDEWALL", "喷头"],
+    "风口": ["DIFFUSER", "GRILLE", "REGISTER", "风口", "散流器"],
+    "灯具": ["LIGHT", "LUMINAIRE", "FIXTURE", "灯具", "灯"],
+    "插座": ["OUTLET", "RECEPTACLE", "插座"],
+    "开关": ["SWITCH", "开关"],
+    "配电箱": ["PANEL", "BOARD", "CABINET", "配电箱", "配电柜"],
+    "风机盘管": ["FCU", "FAN_COIL", "风机盘管"],
+    "水泵": ["PUMP", "水泵"],
+    "水表": ["WATER_METER", "METER", "水表"],
+    "地漏": ["FLOOR_DRAIN", "DRAIN", "地漏"],
+    "检查井": ["CLEANOUT", "C/O", "检查井", "清扫口"],
 }
 
 
@@ -80,7 +79,7 @@ def normalize(name: str) -> str:
     return re.sub(r"[\s_\-]+", "", str(name).upper())
 
 
-def classify_layer(layer_name: str) -> List[Tuple[str, float]]:
+def classify_layer(layer_name: str) -> list[tuple[str, float]]:
     """返回 [(分类, 置信度)] 列表，按置信度降序"""
     if not layer_name:
         return []
@@ -88,10 +87,8 @@ def classify_layer(layer_name: str) -> List[Tuple[str, float]]:
     scores = []
     for category, rules in LAYER_RULES.items():
         # 过滤过短的关键字（避免 "P"/"W"/"H" 误判）
-        layer_hits = [kw for kw in rules["layer_kw"]
-                      if len(normalize(kw)) >= 2 and normalize(kw) in norm]
-        block_hits = [kw for kw in rules["block_kw"]
-                      if len(normalize(kw)) >= 2 and normalize(kw) in norm]
+        layer_hits = [kw for kw in rules["layer_kw"] if len(normalize(kw)) >= 2 and normalize(kw) in norm]
+        block_hits = [kw for kw in rules["block_kw"] if len(normalize(kw)) >= 2 and normalize(kw) in norm]
         if layer_hits:
             # 置信度按最长关键字长度
             best = max(layer_hits, key=lambda k: len(normalize(k)))
@@ -104,7 +101,7 @@ def classify_layer(layer_name: str) -> List[Tuple[str, float]]:
     return sorted(scores, key=lambda x: -x[1])
 
 
-def classify_block(block_name: str) -> List[Tuple[str, float]]:
+def classify_block(block_name: str) -> list[tuple[str, float]]:
     """返回块名分类"""
     if not block_name or block_name.startswith("*"):
         return []
@@ -121,7 +118,7 @@ def classify_all_layers(layer_names: list) -> dict:
     return {name: classify_layer(name) for name in layer_names}
 
 
-def get_top_category(layer_name: str) -> Tuple[str, float]:
+def get_top_category(layer_name: str) -> tuple[str, float]:
     """获取最高置信度分类（便捷 API）"""
     results = classify_layer(layer_name)
     if results:
@@ -145,7 +142,4 @@ def suggest_boq_categories(layer_summaries: list) -> list:
         if conf >= 0.7:
             category_layers.setdefault(cat, []).append(name)
 
-    return [
-        (cat, layers, len(layers))
-        for cat, layers in sorted(category_layers.items(), key=lambda x: -len(x[1]))
-    ]
+    return [(cat, layers, len(layers)) for cat, layers in sorted(category_layers.items(), key=lambda x: -len(x[1]))]

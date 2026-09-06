@@ -3,6 +3,7 @@
 支持 OpenAI 兼容协议 embedding（text-embedding-* 等）。
 未配置 embedding 模型时 is_available()=False，调用方自动跳过该层，不影响离线模式。
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -14,6 +15,7 @@ from .. import config
 
 class EmbeddingProvider(ABC):
     """向量化抽象"""
+
     name: str = "abstract"
 
     @abstractmethod
@@ -28,6 +30,7 @@ class EmbeddingProvider(ABC):
 
 class OllamaEmbeddingProvider(EmbeddingProvider):
     """本地 Ollama embedding"""
+
     name = "ollama"
 
     def __init__(self, model: str = None, host: str = None):
@@ -39,6 +42,7 @@ class OllamaEmbeddingProvider(EmbeddingProvider):
             return False
         try:
             import urllib.request
+
             with urllib.request.urlopen(f"{self.host}/api/tags", timeout=3) as r:
                 data = r.read()
             return self.model in str(data)
@@ -62,6 +66,7 @@ class OllamaEmbeddingProvider(EmbeddingProvider):
 
 class OpenAIEmbeddingProvider(EmbeddingProvider):
     """OpenAI 兼容端点 embedding（text-embedding-3-small 等）"""
+
     name = "custom"
 
     def __init__(self, model: str = "", base_url: str = "", api_key: str = ""):
@@ -98,6 +103,7 @@ def create_embedding_provider(provider: str = None) -> EmbeddingProvider:
     if provider == "ollama":
         return OllamaEmbeddingProvider()
     from ..llm.settings import load_active
+
     llmc = load_active()
     active = llmc.primary_backend or config.MODEL_PROVIDER
     if provider is None and str(active).lower() == "ollama":

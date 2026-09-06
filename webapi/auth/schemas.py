@@ -1,10 +1,10 @@
 """Pydantic v2 schema for RuoYi 风格 RBAC"""
+
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # ---------- User ----------
@@ -21,10 +21,10 @@ class UserCreate(UserBase):
 
 
 class UserUpdate(BaseModel):
-    nickname: Optional[str] = None
-    email: Optional[str] = None
-    phone: Optional[str] = None
-    is_active: Optional[bool] = None
+    nickname: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    is_active: bool | None = None
 
 
 class UserRead(UserBase):
@@ -32,7 +32,7 @@ class UserRead(UserBase):
     id: int
     is_active: bool
     is_admin: bool
-    roles: list["RoleRead"] = Field(default_factory=list)
+    roles: list[RoleRead] = Field(default_factory=list)
     created_at: datetime
 
 

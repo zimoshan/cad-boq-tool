@@ -7,28 +7,31 @@
 - 冲突检测 + 去重
 - 输出总 BOQ
 """
+
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, List, Optional
 
-from .context_infer import scan_folder, infer_trade, infer_floor
-from .stream_aggregate import (
-    aggregate_file_streaming, AggregatedProject,
-)
+from .context_infer import infer_floor, infer_trade, scan_folder
 from .llm_classify import llm_classify_openai
-from .quality import reconcile_across_files, detect_conflicts
 from .orchestrator import TakeoffConfig, TakeoffItem
+from .quality import detect_conflicts, reconcile_across_files
+from .stream_aggregate import (
+    AggregatedProject,
+    aggregate_file_streaming,
+)
 
 
 @dataclass
 class FolderPipelineResult:
     """文件夹算量结果"""
+
     success: bool
     project_name: str
-    items: list = field(default_factory=list)        # list[TakeoffItem]
+    items: list = field(default_factory=list)  # list[TakeoffItem]
     files_processed: int = 0
     files_failed: int = 0
     llm_calls: int = 0
@@ -47,7 +50,7 @@ PHASE_RECONCILE = "冲突检测+去重"
 def run_folder_pipeline(
     folder: Path,
     config: TakeoffConfig = None,
-    progress_cb: Optional[Callable[[str, float, str], None]] = None,
+    progress_cb: Callable[[str, float, str], None] | None = None,
     legend: dict = None,
 ) -> FolderPipelineResult:
     """主入口：文件夹 → 总 BOQ。
@@ -96,17 +99,19 @@ def run_folder_pipeline(
         stats["files"].append({"path": f.name, "floor": floor, "entities": fs.entity_count})
         # 主动释放（防止 Python 延迟 GC）
         del fs
-    _progress(PHASE_AGGREGATE_FILES, 1.0,
-              f"完成: {result.files_processed} 张 / 失败 {result.files_failed}")
+    _progress(PHASE_AGGREGATE_FILES, 1.0, f"完成: {result.files_processed} 张 / 失败 {result.files_failed}")
     stats["phases"][PHASE_AGGREGATE_FILES] = {"elapsed": time.time() - t_phase}
 
     # ===== 阶段 3: 智能分块 + LLM 分类 =====
-    llm_items: List[TakeoffItem] = []
+    llm_items: list[TakeoffItem] = []
     chunks = list(aggregator.to_llm_chunks())
     t_phase = time.time()
     for j, chunk in enumerate(chunks, 1):
-        _progress(PHASE_LLM_CHUNKS, (j - 1) / len(chunks),
-                  f"LLM 分类 chunk {j}/{len(chunks)} ({chunk.get('project_name','')})")
+        _progress(
+            PHASE_LLM_CHUNKS,
+            (j - 1) / len(chunks),
+            f"LLM 分类 chunk {j}/{len(chunks)} ({chunk.get('project_name', '')})",
+        )
         try:
             llm_result = llm_classify_openai(
                 chunk,
@@ -120,20 +125,21 @@ def run_folder_pipeline(
             result.total_tokens_in += llm_result.get("tokens_in", 0)
             result.total_tokens_out += llm_result.get("tokens_out", 0)
             for it in llm_result["items"]:
-                llm_items.append(TakeoffItem(
-                    code=it["code"],
-                    description=it["description"],
-                    unit=it["unit"],
-                    quantity=it["quantity"],
-                    source_layer=it.get("source_layer", ""),
-                    confidence=it["confidence"],
-                    reasoning=it.get("reasoning", ""),
-                    raw=it,
-                ))
+                llm_items.append(
+                    TakeoffItem(
+                        code=it["code"],
+                        description=it["description"],
+                        unit=it["unit"],
+                        quantity=it["quantity"],
+                        source_layer=it.get("source_layer", ""),
+                        confidence=it["confidence"],
+                        reasoning=it.get("reasoning", ""),
+                        raw=it,
+                    )
+                )
         except Exception as e:
             result.errors.append(f"LLM chunk {j}: {e}")
-    _progress(PHASE_LLM_CHUNKS, 1.0,
-              f"LLM 完成: {len(llm_items)} 条 / {result.llm_calls} 调用")
+    _progress(PHASE_LLM_CHUNKS, 1.0, f"LLM 完成: {len(llm_items)} 条 / {result.llm_calls} 调用")
     stats["phases"][PHASE_LLM_CHUNKS] = {"elapsed": time.time() - t_phase}
 
     # ===== 阶段 4: 冲突检测 + 跨图去重 =====

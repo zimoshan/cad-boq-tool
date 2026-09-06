@@ -10,17 +10,19 @@ B5 S7 可核性 + Excel 保真回写（v2.0 §2.5 / §5.3，2026-09-06）：
   PROVISIONAL: 暂定值（人工标注）
 - writeback_audit 表（alembic 0002 创建）：保真回写审计
 """
+
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from .. import db
 from ..binding.resolver import recompute
 
 
-class Takability(str, Enum):
+class Takability(StrEnum):
     """B5 S7 可核性 6 状态"""
+
     MEASURABLE = "MEASURABLE"
     GROUP_ONLY = "GROUP_ONLY"
     NOT_MEASURABLE = "NOT_MEASURABLE"
@@ -91,13 +93,14 @@ def _log_writeback_audit(
 def compute_file_sha256(file_path: str) -> str:
     """P4 v1.0 §6.4：算源文件 SHA-256（防 tamper 检测）"""
     import hashlib
+
     try:
         h = hashlib.sha256()
         with open(file_path, "rb") as f:
             for chunk in iter(lambda: f.read(8192), b""):
                 h.update(chunk)
         return h.hexdigest()
-    except (OSError, IOError):
+    except OSError:
         return ""
 
 
@@ -106,9 +109,7 @@ def _collect_sheet_drawing_types(boq_item_id: int) -> list[str]:
     try:
         with db.get_conn() as conn:
             rows = conn.execute(
-                "SELECT s.drawing_type FROM mapping m "
-                "JOIN sheet s ON s.id = m.sheet_id "
-                "WHERE m.boq_item_id = ?",
+                "SELECT s.drawing_type FROM mapping m JOIN sheet s ON s.id = m.sheet_id WHERE m.boq_item_id = ?",
                 (boq_item_id,),
             ).fetchall()
         return [r["drawing_type"] or "plan" for r in rows]
@@ -162,7 +163,8 @@ def set_provisional_flag(boq_item_id: int, provisional: bool = True) -> None:
     try:
         with db.get_conn() as conn:
             row = conn.execute(
-                "SELECT remark FROM boq_item WHERE id = ?", (boq_item_id,),
+                "SELECT remark FROM boq_item WHERE id = ?",
+                (boq_item_id,),
             ).fetchone()
             current_remark = (row["remark"] if row else "") or ""
             has_flag = "[PROVISIONAL]" in current_remark
@@ -183,6 +185,5 @@ def set_provisional_flag(boq_item_id: int, provisional: bool = True) -> None:
 def reset_measured_qty(project_id: int) -> int:
     """清空某项目全部实测数量（回写入口失效/撤销时调用）。返回清零行数。"""
     with db.get_conn() as conn:
-        cur = conn.execute(
-            "UPDATE boq_item SET measured_qty=0 WHERE project_id=?", (project_id,))
+        cur = conn.execute("UPDATE boq_item SET measured_qty=0 WHERE project_id=?", (project_id,))
         return cur.rowcount

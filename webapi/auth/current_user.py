@@ -3,12 +3,10 @@
 Phase 0 AUTH_MODE=no_login：直接返回 sysadmin stub
 未来切 AUTH_MODE=login：改为 JWT 解析 + DB 查 user
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
-
-from fastapi import Depends
 
 from webapi.config import get_settings
 
@@ -16,6 +14,7 @@ from webapi.config import get_settings
 @dataclass
 class CurrentUser:
     """当前用户（webapi 视图层使用）"""
+
     id: int
     username: str
     nickname: str

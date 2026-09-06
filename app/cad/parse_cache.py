@@ -10,6 +10,7 @@ Cache key = sha256(absolute_path | mtime_ns | file_size | parser_version)
 
 只缓存解析结果（Entity.id=0 阶段），入库时 replace_entities 重新分配 id。
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -21,7 +22,7 @@ from ..config import DATA_DIR, PARSE_CACHE_MAX_ENTRIES
 from ..models import Entity
 
 CACHE_DIR = DATA_DIR / "drawing_cache"
-PARSER_VERSION = "v2"   # v2: 嵌套 INSERT 递归解析（块显示不全修复）
+PARSER_VERSION = "v2"  # v2: 嵌套 INSERT 递归解析（块显示不全修复）
 
 
 def _max_entries() -> int:
@@ -31,8 +32,10 @@ def _max_entries() -> int:
     except (TypeError, ValueError):
         return 100
 
+
 try:
     import importlib.util
+
     _HAS_PARQUET = importlib.util.find_spec("pyarrow") is not None
 except Exception:
     _HAS_PARQUET = False
@@ -40,9 +43,14 @@ except Exception:
 
 def _entity_to_dict(e: Entity) -> dict:
     return {
-        "handle": e.handle, "dxf_type": e.dxf_type, "layer": e.layer,
-        "block_name": e.block_name, "bbox": json.dumps(list(e.bbox)),
-        "geom_json": e.geom_json, "length": e.length, "area": e.area,
+        "handle": e.handle,
+        "dxf_type": e.dxf_type,
+        "layer": e.layer,
+        "block_name": e.block_name,
+        "bbox": json.dumps(list(e.bbox)),
+        "geom_json": e.geom_json,
+        "length": e.length,
+        "area": e.area,
         "color": json.dumps(list(e.color)),
     }
 
@@ -57,10 +65,14 @@ def _dict_to_entity(d: dict) -> Entity:
     except Exception:
         color = (255, 255, 255)
     return Entity(
-        handle=d.get("handle", ""), dxf_type=d.get("dxf_type", ""),
-        layer=d.get("layer", ""), block_name=d.get("block_name", ""),
-        bbox=bbox, geom_json=d.get("geom_json", ""),
-        length=float(d.get("length") or 0), area=float(d.get("area") or 0),
+        handle=d.get("handle", ""),
+        dxf_type=d.get("dxf_type", ""),
+        layer=d.get("layer", ""),
+        block_name=d.get("block_name", ""),
+        bbox=bbox,
+        geom_json=d.get("geom_json", ""),
+        length=float(d.get("length") or 0),
+        area=float(d.get("area") or 0),
         color=color,
     )
 
@@ -84,6 +96,7 @@ def _cache_dir_for(path: str) -> Path:
 def get_cached_drawing(path: str):
     """命中返回 ParsedDrawing，未命中返回 None"""
     from .cad_parser import ParsedDrawing
+
     d = _cache_dir_for(path)
     meta_file = d / "metadata.json"
     blocks_file = d / "blocks.json"
@@ -91,9 +104,9 @@ def get_cached_drawing(path: str):
         return None
 
     try:
-        with open(meta_file, "r", encoding="utf-8") as f:
+        with open(meta_file, encoding="utf-8") as f:
             meta = json.load(f)
-        with open(blocks_file, "r", encoding="utf-8") as f:
+        with open(blocks_file, encoding="utf-8") as f:
             blk = json.load(f)
         if meta.get("parser_version") != PARSER_VERSION:
             return None
@@ -108,9 +121,7 @@ def get_cached_drawing(path: str):
             layer_colors={k: tuple(v) for k, v in meta.get("layer_colors", {}).items()},
             blocks=meta.get("blocks", {}),
             block_refs=blk.get("block_refs", {}),
-            blocks_with_count={
-                k: [_dict_to_entity(x) for x in v]
-                for k, v in blk.get("blocks_with_count", {}).items()},
+            blocks_with_count={k: [_dict_to_entity(x) for x in v] for k, v in blk.get("blocks_with_count", {}).items()},
         )
         return drawing
     except Exception:
@@ -124,6 +135,7 @@ def _load_entities(d: Path, count: int):
         if pf.exists():
             try:
                 import pandas as pd
+
                 df = pd.read_parquet(pf)
                 return [_dict_to_entity(row) for row in df.to_dict("records")]
             except Exception:
@@ -131,7 +143,7 @@ def _load_entities(d: Path, count: int):
     jf = d / "entities.json"
     if jf.exists():
         try:
-            with open(jf, "r", encoding="utf-8") as f:
+            with open(jf, encoding="utf-8") as f:
                 return [_dict_to_entity(x) for x in json.load(f)]
         except Exception:
             return None
@@ -150,6 +162,7 @@ def cache_drawing(path: str, drawing) -> bool:
         if _HAS_PARQUET:
             try:
                 import pandas as pd
+
                 pd.DataFrame(rows).to_parquet(d / "entities.parquet", index=False)
             except Exception:
                 with open(d / "entities.json", "w", encoding="utf-8") as f:
@@ -159,22 +172,30 @@ def cache_drawing(path: str, drawing) -> bool:
                 json.dump(rows, f, ensure_ascii=False)
 
         with open(d / "blocks.json", "w", encoding="utf-8") as f:
-            json.dump({
-                "block_refs": drawing.block_refs,
-                "blocks_with_count": {
-                    k: [_entity_to_dict(e) for e in v]
-                    for k, v in drawing.blocks_with_count.items()},
-            }, f, ensure_ascii=False)
+            json.dump(
+                {
+                    "block_refs": drawing.block_refs,
+                    "blocks_with_count": {
+                        k: [_entity_to_dict(e) for e in v] for k, v in drawing.blocks_with_count.items()
+                    },
+                },
+                f,
+                ensure_ascii=False,
+            )
 
         with open(d / "metadata.json", "w", encoding="utf-8") as f:
-            json.dump({
-                "parser_version": PARSER_VERSION,
-                "entity_count": len(drawing.entities),
-                "layers": drawing.layers,
-                "layer_colors": {k: list(v) for k, v in drawing.layer_colors.items()},
-                "blocks": drawing.blocks,
-                "cached_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-            }, f, ensure_ascii=False)
+            json.dump(
+                {
+                    "parser_version": PARSER_VERSION,
+                    "entity_count": len(drawing.entities),
+                    "layers": drawing.layers,
+                    "layer_colors": {k: list(v) for k, v in drawing.layer_colors.items()},
+                    "blocks": drawing.blocks,
+                    "cached_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                },
+                f,
+                ensure_ascii=False,
+            )
 
         _enforce_cap()
         return True
@@ -191,6 +212,7 @@ def _enforce_cap() -> None:
         victim = entries.pop(0)
         try:
             import shutil
+
             shutil.rmtree(victim)
         except Exception:
             pass
@@ -202,6 +224,7 @@ def clear_cache() -> int:
     n = 0
     if CACHE_DIR.is_dir():
         import shutil
+
         for p in CACHE_DIR.iterdir():
             try:
                 shutil.rmtree(p)
@@ -216,7 +239,5 @@ def cache_stats() -> dict:
     entries = []
     if CACHE_DIR.is_dir():
         for p in sorted(CACHE_DIR.iterdir(), key=lambda x: x.stat().st_mtime):
-            entries.append({"key": p.name,
-                            "size_mb": round(sum(f.stat().st_size for f in p.iterdir()) / 1e6, 2)})
-    return {"dir": str(CACHE_DIR), "parquet": _HAS_PARQUET, "entries": entries,
-            "count": len(entries)}
+            entries.append({"key": p.name, "size_mb": round(sum(f.stat().st_size for f in p.iterdir()) / 1e6, 2)})
+    return {"dir": str(CACHE_DIR), "parquet": _HAS_PARQUET, "entries": entries, "count": len(entries)}

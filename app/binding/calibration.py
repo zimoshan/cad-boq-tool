@@ -13,6 +13,7 @@
 
 初始可采用加权平均 + sigmoid 归一化
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -22,13 +23,14 @@ from typing import Any
 @dataclass
 class CalibrationInput:
     """5 维输入"""
-    llm_confidence: float = 0.0          # 0~1，模型自报
-    rule_score: float = 0.0             # 0~1，规则匹配
-    embedding_similarity: float = 0.0     # 0~1，cosine
-    spec_match_score: float = 0.0        # 0~1（EXACT=1.0 / NORMALIZED=0.95 / COMPATIBLE=0.7 / UNKNOWN=0.5 / CONFLICT=0.0）
-    historical_accuracy: float = 0.0      # 0~1，历史类似样本准确率
-    top1_top2_margin: float = 0.0        # 0~1，top1 与 top2 差距
-    has_conflict: bool = False           # 规格冲突
+
+    llm_confidence: float = 0.0  # 0~1，模型自报
+    rule_score: float = 0.0  # 0~1，规则匹配
+    embedding_similarity: float = 0.0  # 0~1，cosine
+    spec_match_score: float = 0.0  # 0~1（EXACT=1.0 / NORMALIZED=0.95 / COMPATIBLE=0.7 / UNKNOWN=0.5 / CONFLICT=0.0）
+    historical_accuracy: float = 0.0  # 0~1，历史类似样本准确率
+    top1_top2_margin: float = 0.0  # 0~1，top1 与 top2 差距
+    has_conflict: bool = False  # 规格冲突
 
 
 # 默认权重（v1.0 §20 建议"按 discipline+system 分层校准"，Phase 5 实现）

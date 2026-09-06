@@ -3,18 +3,25 @@
 输入严格裁剪：CAD 对象 + Top-N 候选 BOQ，绝不给整张 DWG。
 输出经 JSON Schema + Pydantic + 业务校验（selected ∈ 候选集），失败自动重试。
 """
+
 from __future__ import annotations
 
-from .. import db, config
+from .. import config, db
 from ..llm.prompts import build_binding_prompt
-from ..llm.schema import parse_binding_suggestion
 from ..llm.runner import run_llm_with_retry
+from ..llm.schema import parse_binding_suggestion
 from . import candidate as cand
 
 
-def llm_rerank(project_id: int, eo, base_candidates: list,
-               top_n: int = None, model: str = None, host: str = None,
-               items: list = None) -> list:
+def llm_rerank(
+    project_id: int,
+    eo,
+    base_candidates: list,
+    top_n: int = None,
+    model: str = None,
+    host: str = None,
+    items: list = None,
+) -> list:
     """对候选集重排序。
 
     Args:
@@ -34,8 +41,9 @@ def llm_rerank(project_id: int, eo, base_candidates: list,
         items = db.get_boq_items(project_id)
     items = {it.id: it for it in items}
     allowed = [items[c[0]].code for c in base_candidates if c[0] in items]
-    boq_lines = [(c[0], items[c[0]].code, items[c[0]].description, items[c[0]].unit)
-                 for c in base_candidates if c[0] in items]
+    boq_lines = [
+        (c[0], items[c[0]].code, items[c[0]].description, items[c[0]].unit) for c in base_candidates if c[0] in items
+    ]
     if not boq_lines:
         return base_candidates
 
@@ -45,9 +53,15 @@ def llm_rerank(project_id: int, eo, base_candidates: list,
         return parse_binding_suggestion(content, allowed_boq_ids=allowed)
 
     resp = run_llm_with_retry(
-        project_id, task_type="binding", system=system, user=user,
-        validator=_validate, model=model, host=host,
-        prompt_version=config.BINDING_PROMPT_VERSION)
+        project_id,
+        task_type="binding",
+        system=system,
+        user=user,
+        validator=_validate,
+        model=model,
+        host=host,
+        prompt_version=config.BINDING_PROMPT_VERSION,
+    )
 
     if not resp["ok"] or resp["parsed"] is None:
         return base_candidates  # 保底：LLM 失败不丢弃规则候选
@@ -67,14 +81,16 @@ def llm_rerank(project_id: int, eo, base_candidates: list,
     out: list = []
     sel_id = code2id.get(sug.selected_boq_id)
     if sel_id is not None:
-        out.append((sel_id, sug.confidence, (sug.reason or "LLM 推荐") + review_flag,
-                    cand.METHOD_LLM, resp["run_ids"][-1]))
+        out.append(
+            (sel_id, sug.confidence, (sug.reason or "LLM 推荐") + review_flag, cand.METHOD_LLM, resp["run_ids"][-1])
+        )
     # 备选（LLM，置信度 ×0.9）
     for alt in sug.alternative_boq_ids[:2]:
         aid = code2id.get(alt)
         if aid is not None and aid not in [c[0] for c in out]:
-            out.append((aid, round(sug.confidence * 0.9, 3),
-                        "LLM 备选" + review_flag, cand.METHOD_LLM, resp["run_ids"][-1]))
+            out.append(
+                (aid, round(sug.confidence * 0.9, 3), "LLM 备选" + review_flag, cand.METHOD_LLM, resp["run_ids"][-1])
+            )
     # 保底补足：未被选中的原候选（method 保持原样）
     seen = {c[0] for c in out}
     for c in base_candidates:

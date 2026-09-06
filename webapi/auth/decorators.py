@@ -3,10 +3,11 @@
 Phase 0（AUTH_MODE=no_login）：装饰器直接放行（no_login 模式无鉴权）
 未来切 AUTH_MODE=login：通过 Casbin 校验 perm_code
 """
+
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import wraps
-from typing import Callable
 
 from fastapi import HTTPException, status
 

@@ -2,14 +2,13 @@
 
 #9 决策：后端代理 5 后端（Ollama/DashScope/OpenAI/DeepSeek/Custom）
 """
+
 from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.llm.runner import run_llm_with_retry
 from app.takeoff.llm_backends import LLMConfig, create_backend
 from webapi.config import get_settings
 from webapi.services.base import ServiceError
@@ -18,6 +17,7 @@ from webapi.services.base import ServiceError
 async def get_llm_settings(db: AsyncSession) -> dict[str, Any]:
     """读 llm_settings 单例表（PK=1）"""
     from sqlalchemy import text
+
     try:
         result = await db.execute(text("SELECT * FROM llm_settings WHERE id = 1"))
         row = result.first()
@@ -33,17 +33,30 @@ async def get_llm_settings(db: AsyncSession) -> dict[str, Any]:
 async def update_llm_settings(db: AsyncSession, updates: dict[str, Any]) -> dict[str, Any]:
     """更新 llm_settings（部分字段更新）"""
     from sqlalchemy import text
+
     if not updates:
         return await get_llm_settings(db)
     # 构造 SET 子句
     allowed_keys = {
-        "active_backend", "ollama_host", "ollama_model",
-        "dashscope_api_key", "dashscope_model",
-        "openai_api_key", "openai_model",
-        "deepseek_api_key", "deepseek_model",
-        "custom_base_url", "custom_api_key", "custom_model", "custom_embedding_model",
-        "fallback_enabled", "fallback_backend", "quality_threshold",
-        "temperature", "timeout", "max_tokens",
+        "active_backend",
+        "ollama_host",
+        "ollama_model",
+        "dashscope_api_key",
+        "dashscope_model",
+        "openai_api_key",
+        "openai_model",
+        "deepseek_api_key",
+        "deepseek_model",
+        "custom_base_url",
+        "custom_api_key",
+        "custom_model",
+        "custom_embedding_model",
+        "fallback_enabled",
+        "fallback_backend",
+        "quality_threshold",
+        "temperature",
+        "timeout",
+        "max_tokens",
     }
     set_clauses = [f"{k} = :{k}" for k in updates if k in allowed_keys]
     if not set_clauses:

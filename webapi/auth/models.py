@@ -7,9 +7,8 @@
 - sys_dict (字典)
 - sys_user_role (用户-角色 N:N)
 """
-from __future__ import annotations
 
-from typing import Optional
+from __future__ import annotations
 
 from sqlalchemy import Boolean, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -19,6 +18,7 @@ from webapi.db.base import Base
 
 class SysUser(Base):
     """用户表"""
+
     __tablename__ = "sys_user"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -33,7 +33,7 @@ class SysUser(Base):
     remark: Mapped[str] = mapped_column(String(255), default="", nullable=False)
 
     # 关系
-    roles: Mapped[list["SysRole"]] = relationship(
+    roles: Mapped[list[SysRole]] = relationship(
         "SysRole",
         secondary="sys_user_role",
         back_populates="users",
@@ -43,6 +43,7 @@ class SysUser(Base):
 
 class SysRole(Base):
     """角色表"""
+
     __tablename__ = "sys_role"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -52,13 +53,12 @@ class SysRole(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # 关系
-    users: Mapped[list[SysUser]] = relationship(
-        "SysUser", secondary="sys_user_role", back_populates="roles"
-    )
+    users: Mapped[list[SysUser]] = relationship("SysUser", secondary="sys_user_role", back_populates="roles")
 
 
 class SysUserRole(Base):
     """用户-角色 N:N 关联表"""
+
     __tablename__ = "sys_user_role"
     __table_args__ = (UniqueConstraint("user_id", "role_id", name="uq_user_role"),)
 
@@ -73,6 +73,7 @@ class SysUserRole(Base):
 
 class SysMenu(Base):
     """菜单/权限表（type: M=目录 C=菜单 F=按钮）"""
+
     __tablename__ = "sys_menu"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -90,6 +91,7 @@ class SysMenu(Base):
 
 class SysDict(Base):
     """字典表（type+key → value）"""
+
     __tablename__ = "sys_dict"
     __table_args__ = (UniqueConstraint("dict_type", "dict_key", name="uq_dict_type_key"),)
 

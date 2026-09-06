@@ -3,6 +3,7 @@
 P1-2 增强：DB 后端（alembic 0003 test_data_registry）优先，JSON 本地 fallback
 由 TEST_DATA_BACKEND env 切换（默认 json，向后兼容）
 """
+
 # 不使用 from __future__ import annotations：Pydantic 2.8 + FastAPI 0.115 forward ref 解析问题
 import os
 
@@ -13,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from webapi.auth.decorators import requires
 from webapi.config import get_settings
 from webapi.db import get_db
-from webapi.schemas.dataset import TestDataEntry
 from webapi.services import dataset as dataset_service
 
 router = APIRouter(prefix="/api/dataset", tags=["dataset"])
@@ -56,12 +56,8 @@ async def list_entries(db: AsyncSession = Depends(get_db)) -> dict:
 async def mark(req: MarkRequest, db: AsyncSession = Depends(get_db)) -> dict:
     """手动标记一条测试数据（#3 决策）"""
     if _use_db():
-        return await dataset_service.mark_entry_db(
-            db, req.name, req.project_id, req.file_path, req.data_type, req.note
-        )
-    return dataset_service.mark_entry_json(
-        req.name, req.project_id, req.file_path, req.data_type, req.note
-    )
+        return await dataset_service.mark_entry_db(db, req.name, req.project_id, req.file_path, req.data_type, req.note)
+    return dataset_service.mark_entry_json(req.name, req.project_id, req.file_path, req.data_type, req.note)
 
 
 @router.post("/deactivate")
@@ -91,6 +87,7 @@ async def get_manifest(dataset_id: str = "lbh") -> dict:
     manifest = dataset_service.load_manifest(dataset_id)
     if not manifest:
         from fastapi import HTTPException
+
         raise HTTPException(status_code=404, detail=f"Manifest for {dataset_id} not found")
     missing = dataset_service.validate_manifest(manifest)
     return {"manifest": manifest, "missing_fields": missing, "valid": not missing}
@@ -110,8 +107,10 @@ async def update_manifest(req: ManifestUpdateRequest) -> dict:
         manifest = dataset_service.update_manifest_field(req.dataset_id, req.key, req.value)
     except Exception as e:
         from webapi.services.base import ServiceError
+
         raise ServiceError(str(e), code="manifest_update_error")
     if not manifest:
         from fastapi import HTTPException
+
         raise HTTPException(status_code=404, detail="Manifest not found")
     return {"updated": True, "manifest": manifest}

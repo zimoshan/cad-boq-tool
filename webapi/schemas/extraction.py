@@ -1,7 +1,8 @@
 """extraction 域 schema"""
+
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -23,7 +24,7 @@ class ExtractionResponse(BaseModel):
 class EngineeringObjectRead(BaseModel):
     id: int
     project_id: int
-    sheet_id: Optional[int] = None
+    sheet_id: int | None = None
     object_type: str = ""
     discipline: str = ""
     system: str = ""

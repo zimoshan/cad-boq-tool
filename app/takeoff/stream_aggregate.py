@@ -5,16 +5,16 @@ Phase 23-1：
 - AggregatedProject 跨文件累计 layer/block/floor
 - to_llm_chunks() 智能分块（24K token 上限）
 """
+
 from __future__ import annotations
 
 import json
 from collections import defaultdict
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Iterator
 
 from ..cad import cad_parser as cad_parser
 from .aggregate import aggregate as aggregate_full
-
 
 # 1 token ≈ 1.5 字符（中文估算）
 CHARS_PER_TOKEN = 1.5
@@ -24,6 +24,7 @@ DEFAULT_MAX_TOKENS = 24_000
 @dataclass
 class FileSummary:
     """单文件聚合（轻量：~10 KB/文件）"""
+
     path: str
     floor: str = ""
     section: str = ""
@@ -37,10 +38,11 @@ class FileSummary:
 @dataclass
 class AggregatedProject:
     """全项目聚合（跨文件累计）"""
+
     project_name: str
-    layers: dict = field(default_factory=dict)        # layer_name -> LayerAccumulator
-    block_inserts: dict = field(default_factory=dict) # block_name -> total count
-    files: list = field(default_factory=list)         # list[FileSummary]
+    layers: dict = field(default_factory=dict)  # layer_name -> LayerAccumulator
+    block_inserts: dict = field(default_factory=dict)  # block_name -> total count
+    files: list = field(default_factory=list)  # list[FileSummary]
     typical_sizes: list = field(default_factory=list)
     trade: str = ""
 
@@ -56,7 +58,7 @@ class AggregatedProject:
             # type_breakdown 累加
             for t, c in (layer_dict.get("type_breakdown") or {}).items():
                 acc.type_breakdown[t] = acc.type_breakdown.get(t, 0) + c
-            for txt in (layer_dict.get("sample_texts") or []):
+            for txt in layer_dict.get("sample_texts") or []:
                 acc.sample_texts.append(txt)
             acc.floors.add(file_summary.floor)
             acc.files.add(file_summary.path)
@@ -149,6 +151,7 @@ class AggregatedProject:
 @dataclass
 class LayerAccumulator:
     """跨文件累计的图层数据"""
+
     name: str
     entity_count: int = 0
     total_length_mm: float = 0.0
@@ -159,8 +162,7 @@ class LayerAccumulator:
     floors: set = field(default_factory=set)
 
 
-def aggregate_file_streaming(file_path: str, floor: str = "",
-                            section: str = "") -> FileSummary:
+def aggregate_file_streaming(file_path: str, floor: str = "", section: str = "") -> FileSummary:
     """单文件聚合（不持有 raw entities，靠 cad_parser 流式生成结果）
 
     实际上 cad_parser.parse_dxf 已经是流式（内部只持有 layer/block 索引），
@@ -169,6 +171,7 @@ def aggregate_file_streaming(file_path: str, floor: str = "",
     fs = FileSummary(path=file_path, floor=floor, section=section)
     try:
         from ..cad import parse_cache
+
         drawing = parse_cache.get_cached_drawing(file_path)
         if drawing is None:
             drawing = cad_parser.parse_dxf(file_path)

@@ -1,21 +1,20 @@
 """绑定域 schema"""
-from __future__ import annotations
 
-from typing import Optional
+from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
 class GenerateCandidatesRequest(BaseModel):
     project_id: int
-    sheet_id: Optional[int] = None
+    sheet_id: int | None = None
     use_llm: bool = True
     top_n: int = Field(default=5, ge=1, le=20)
 
 
 class GenerateCandidatesResponse(BaseModel):
     project_id: int
-    sheet_id: Optional[int] = None
+    sheet_id: int | None = None
     use_llm: bool
     candidates_created: int
     stats: dict = Field(default_factory=dict)

@@ -13,6 +13,7 @@
   - add_dedup_record(...)
   - get_dedup_records(project_id) → list
 """
+
 from __future__ import annotations
 
 import json
@@ -47,6 +48,7 @@ def dedup_engineering_objects(project_id: int, eos: list | None = None) -> dict[
     """
     if eos is None:
         from .object_model import get_engineering_objects
+
         eos = get_engineering_objects(project_id)
 
     # 按 block_name 分组
@@ -71,8 +73,10 @@ def dedup_engineering_objects(project_id: int, eos: list | None = None) -> dict[
             placed = False
             for cluster in clusters:
                 # 簇内任意一个 bbox 与当前重叠 ≥0.5 → 归入同簇
-                if any(_bbox_overlap_ratio(getattr(c, "bbox", None) or _extract_bbox(c), _extract_bbox(eo)) >= 0.5
-                       for c in cluster):
+                if any(
+                    _bbox_overlap_ratio(getattr(c, "bbox", None) or _extract_bbox(c), _extract_bbox(eo)) >= 0.5
+                    for c in cluster
+                ):
                     cluster.append(eo)
                     placed = True
                     break
@@ -96,16 +100,18 @@ def dedup_engineering_objects(project_id: int, eos: list | None = None) -> dict[
             for c in cluster:
                 if c.id != canonical.id:
                     merged_eo_ids.add(c.id)
-            dedup_records.append({
-                "project_id": project_id,
-                "block_name": block_name,
-                "sheet_ids": sorted(sheet_ids),
-                "merged_entity_ids": merged_ids,
-                "merged_eo_count": len(cluster),
-                "canonical_eo_id": canonical.id,
-                "dedup_method": "bbox_overlap",
-                "confidence": canonical.confidence,
-            })
+            dedup_records.append(
+                {
+                    "project_id": project_id,
+                    "block_name": block_name,
+                    "sheet_ids": sorted(sheet_ids),
+                    "merged_entity_ids": merged_ids,
+                    "merged_eo_count": len(cluster),
+                    "canonical_eo_id": canonical.id,
+                    "dedup_method": "bbox_overlap",
+                    "confidence": canonical.confidence,
+                }
+            )
 
     return {
         "project_id": project_id,
@@ -128,6 +134,7 @@ def _extract_bbox(eo) -> tuple:
     if not eo.entity_ids:
         return ()
     from .. import db
+
     rows = db.get_entities_by_ids(eo.entity_ids)
     if not rows:
         return ()
@@ -152,6 +159,7 @@ def get_dedup_records(project_id: int) -> list[dict[str, Any]]:
     """读 cross_sheet_dedup 表（Phase 0 占位，DB 表由 alembic 0002 创建）"""
     try:
         from .. import db
+
         with db.get_conn() as conn:
             rows = conn.execute(
                 "SELECT * FROM cross_sheet_dedup WHERE project_id=?",

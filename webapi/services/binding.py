@@ -7,6 +7,7 @@ Phase 0：
 
 #19 选 A：app/binding 业务函数保留，Service 层包装
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -36,16 +37,20 @@ def _log_negative_sample(
         if not row:
             return
         # 写 negative_sample（alembic 0005 表）
-        from sqlalchemy import insert
         from app.db import _SCHEMA  # noqa: F401
+
         try:
             db.execute(
                 text("""INSERT INTO negative_sample(project_id, engineering_object_id, boq_item_id, reason, confidence_at_reject, method, rejected_by, created_at)
                        VALUES(:pid, :eoid, :boqid, :reason, :conf, :method, :rej_by, :ts)"""),
                 {
-                    "pid": project_id, "eoid": row[0], "boqid": row[1],
-                    "reason": reason, "conf": row[2] or 0,
-                    "method": row[3] or "LLM", "rej_by": "sysadmin",
+                    "pid": project_id,
+                    "eoid": row[0],
+                    "boqid": row[1],
+                    "reason": reason,
+                    "conf": row[2] or 0,
+                    "method": row[3] or "LLM",
+                    "rej_by": "sysadmin",
                     "ts": "",
                 },
             )
@@ -114,6 +119,7 @@ async def reject_binding(
         # 写 negative_sample（best-effort，失败不影响主流程）
         try:
             from app import db as app_db
+
             with app_db.get_conn() as conn:
                 row = conn.execute(
                     "SELECT project_id, engineering_object_id, boq_item_id, method, confidence FROM binding_candidate WHERE id=?",
@@ -124,7 +130,15 @@ async def reject_binding(
                 with app_db.get_conn() as conn:
                     conn.execute(
                         "INSERT INTO negative_sample(project_id, engineering_object_id, boq_item_id, reason, confidence_at_reject, method, rejected_by) VALUES(?,?,?,?,?,?,?)",
-                        (project_id, row["engineering_object_id"], row["boq_item_id"], reason, row["confidence"] or 0, row["method"] or "LLM", by_user),
+                        (
+                            project_id,
+                            row["engineering_object_id"],
+                            row["boq_item_id"],
+                            reason,
+                            row["confidence"] or 0,
+                            row["method"] or "LLM",
+                            by_user,
+                        ),
                     )
         except Exception:
             pass

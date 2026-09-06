@@ -10,15 +10,16 @@ V2 工作流第一步：整个 electrical 文件夹（含各系统子文件夹�
   阶段2 解析：ProcessPoolExecutor 进程池并行 parse_dxf（CPU 密集，GIL 限制线程无加速）
   阶段3 入库：主进程流式收回结果 → add_sheet + replace_entities
 """
+
 from __future__ import annotations
 
 import json
 import os
 import tempfile
 import time
+from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from typing import Callable
 
 from . import db
 from .cad import dwg as dwg_svc
@@ -46,11 +47,10 @@ def scan_drawings(folder: str, extensions=(".dwg", ".dxf")) -> list:
             uniq.append(f)
     # 同名优先 DWG：同目录下同名文件，若存在 .dwg 则丢弃 .dxf
     dwg_names = {f.stem.lower() for f in uniq if f.suffix.lower() == ".dwg"}
-    uniq = [f for f in uniq
-            if f.suffix.lower() != ".dxf" or f.stem.lower() not in dwg_names]
+    uniq = [f for f in uniq if f.suffix.lower() != ".dxf" or f.stem.lower() not in dwg_names]
     import re
-    uniq.sort(key=lambda p: [int(t) if t.isdigit() else t
-                             for t in re.split(r"(\d+)", p.name.lower())])
+
+    uniq.sort(key=lambda p: [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", p.name.lower())])
     return uniq
 
 
@@ -61,6 +61,7 @@ def _parse_worker(dxf_path: str, src_path: str):
     不触碰数据库；主进程稍后从缓存载入完整数据入库。
     """
     from .cad.cad_parser import parse_dxf
+
     try:
         drawing = parse_dxf(dxf_path)
         parse_cache.cache_drawing(src_path, drawing)
@@ -76,17 +77,17 @@ def _default_workers() -> int:
 
 def sheet_exists(project_id: int, src_path: str) -> bool:
     """该源文件是否已导入（避免重复导入）"""
-    for s in db.get_sheets(project_id):
-        if s.src_path and Path(s.src_path).resolve() == Path(src_path).resolve():
-            return True
-    return False
+    return any(s.src_path and Path(s.src_path).resolve() == Path(src_path).resolve() for s in db.get_sheets(project_id))
 
 
-def import_folder(project_id: int, folder: str,
-                  progress_cb: Callable[[int, int, str, str], None] = None,
-                  skip_existing: bool = True,
-                  workers: int | None = None,
-                  cancel_event=None) -> dict:
+def import_folder(
+    project_id: int,
+    folder: str,
+    progress_cb: Callable[[int, int, str, str], None] = None,
+    skip_existing: bool = True,
+    workers: int | None = None,
+    cancel_event=None,
+) -> dict:
     """批量导入文件夹（递归）— 三阶段并行流水线。
 
     Args:
@@ -106,9 +107,8 @@ def import_folder(project_id: int, folder: str,
 
     # ===== 阶段 0：扫描 + 过滤已导入 =====
     files = scan_drawings(folder)
-    todo = []       # [(Path, src_path)]  待处理
-    stats = {"imported": 0, "errors": [], "skipped": 0, "total": len(files),
-             "elapsed": 0.0, "parse_failed": 0}
+    todo = []  # [(Path, src_path)]  待处理
+    stats = {"imported": 0, "errors": [], "skipped": 0, "total": len(files), "elapsed": 0.0, "parse_failed": 0}
     done = 0
 
     for f in files:
@@ -139,8 +139,7 @@ def import_folder(project_id: int, folder: str,
 
     if dwg_files:
         if progress_cb:
-            progress_cb(done, len(files),
-                        f"探测 {len(dwg_files)} 张 DWG 可读性…", "convert")
+            progress_cb(done, len(files), f"探测 {len(dwg_files)} 张 DWG 可读性…", "convert")
 
         # 优先 ezdwg 直读，失败的才走 ODA
         ezdwg_ok = []
@@ -153,9 +152,7 @@ def import_folder(project_id: int, folder: str,
                 need_oda.append((f, src))
 
         if progress_cb and (ezdwg_ok or need_oda):
-            progress_cb(done, len(files),
-                        f"直读 {len(ezdwg_ok)} 张 / 需转换 {len(need_oda)} 张",
-                        "convert")
+            progress_cb(done, len(files), f"直读 {len(ezdwg_ok)} 张 / 需转换 {len(need_oda)} 张", "convert")
 
         # ezdwg 可读的直接作为 dxf_path（parse_dxf 内部按扩展名自动选 backend）
         for f, src in ezdwg_ok:
@@ -168,16 +165,15 @@ def import_folder(project_id: int, folder: str,
                 conv_dir = tempfile.mkdtemp(prefix="cadboq_import_")
                 try:
                     from .cad.dwg import convert_dwgs_batch
-                    converted = convert_dwgs_batch(
-                        [src for _, src in need_oda], conv_dir,
-                        parallel=min(4, workers))
+
+                    converted = convert_dwgs_batch([src for _, src in need_oda], conv_dir, parallel=min(4, workers))
                     dxf_map.update(converted)
                 except Exception:
                     pass
             # 没有 ODA 的文件在解析阶段会报错
 
     # ===== 阶段 2+3：进程池并行解析，主进程流式入库 =====
-    parse_jobs = []   # [(src_path, dxf_path)]
+    parse_jobs = []  # [(src_path, dxf_path)]
     for f, src in todo:
         dxf = dxf_map.get(src)
         if dxf:
@@ -191,8 +187,7 @@ def import_folder(project_id: int, folder: str,
 
     if parse_jobs:
         with ProcessPoolExecutor(max_workers=min(workers, len(parse_jobs))) as pool:
-            futures = {pool.submit(_parse_worker, dxf, src): src
-                       for src, dxf in parse_jobs}
+            futures = {pool.submit(_parse_worker, dxf, src): src for src, dxf in parse_jobs}
             for fut in as_completed(futures):
                 if _cancelled():
                     stats["cancelled"] = True
@@ -220,10 +215,14 @@ def import_folder(project_id: int, folder: str,
                             progress_cb(done, len(files), fname, "error")
                         continue
                     sid = db.add_sheet(
-                        project_id, fname, src,
-                        status="ready", entity_count=len(drawing.entities),
+                        project_id,
+                        fname,
+                        src,
+                        status="ready",
+                        entity_count=len(drawing.entities),
                         layer_count=len(drawing.layers),
-                        blocks_json=json.dumps(drawing.blocks, ensure_ascii=False))
+                        blocks_json=json.dumps(drawing.blocks, ensure_ascii=False),
+                    )
                     db.replace_entities(sid, drawing.entities)
                     stats["imported"] += 1
                     done += 1

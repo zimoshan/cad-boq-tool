@@ -1,4 +1,5 @@
 """/api/cad-standard 路由（v1.0 §26 5 规则 CRUD）"""
+
 # 不使用 from __future__ import annotations：Pydantic 2.8 + FastAPI 0.115 forward ref
 import json
 from pathlib import Path
@@ -7,7 +8,6 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from webapi.auth.decorators import requires
-from webapi.config import get_settings
 
 router = APIRouter(prefix="/api/cad-standard", tags=["cad-standard"])
 
@@ -35,6 +35,7 @@ async def get_rule(name: str) -> dict:
     path = _standard_dir() / name
     if not path.exists():
         from fastapi import HTTPException
+
         raise HTTPException(status_code=404, detail=f"Rule file {name} not found")
     return {
         "name": name,
@@ -52,9 +53,15 @@ async def update_rule(name: str, req: RuleUpdateRequest) -> dict:
     """v1.0 §26 更新规则 JSON（按 schema 校验）"""
     if not name.endswith(".json"):
         name = f"{name}.json"
-    if name not in ("layer_rules.json", "block_rules.json", "attribute_rules.json",
-                     "drawing_type_rules.json", "specification_rules.json"):
+    if name not in (
+        "layer_rules.json",
+        "block_rules.json",
+        "attribute_rules.json",
+        "drawing_type_rules.json",
+        "specification_rules.json",
+    ):
         from fastapi import HTTPException
+
         raise HTTPException(status_code=400, detail=f"Unknown rule file: {name}")
     path = _standard_dir() / name
     path.write_text(json.dumps(req.content, ensure_ascii=False, indent=2), encoding="utf-8")

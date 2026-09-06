@@ -2,13 +2,13 @@
 
 Quantity 100% 由 Python 计算（measure.py），LLM 永不参与（任务四原则 4）。
 """
+
 from __future__ import annotations
 
 from .. import db, measure
 
 
-def recompute(project_id: int, boq_item_id: int = None,
-              project_scale: float = 1.0) -> dict:
+def recompute(project_id: int, boq_item_id: int = None, project_scale: float = 1.0) -> dict:
     """确定性重算：项目内全部图纸对指定（或全部）条目累加计量。
 
     Returns:
@@ -59,11 +59,17 @@ def trace_quantity(project_id: int, boq_item_id: int) -> dict:
             if e:
                 r = measure.compute_item(item, m.sheet_id, sheet.scale if sheet else 1.0)
                 qty = r["qty"]
-            branches.append({
-                "mapping": m, "mode": "entity", "target": f"实体#{m.entity_id}",
-                "eo": None, "sheet": sheet,
-                "entities": [e] if e else [], "qty": round(qty, 4),
-            })
+            branches.append(
+                {
+                    "mapping": m,
+                    "mode": "entity",
+                    "target": f"实体#{m.entity_id}",
+                    "eo": None,
+                    "sheet": sheet,
+                    "entities": [e] if e else [],
+                    "qty": round(qty, 4),
+                }
+            )
             continue
 
         # 找到与 mapping 关联的工程对象（block 模式按块名 / layer 模式按图层名）
@@ -87,9 +93,15 @@ def trace_quantity(project_id: int, boq_item_id: int) -> dict:
             r = measure.compute_item(item, eo.sheet_id, sheet.scale if sheet else 1.0)
             qty = r["qty"]
 
-        branches.append({
-            "mapping": m, "mode": m.mode,
-            "target": m.block_name or m.layer_name or f"实体#{m.entity_id}",
-            "eo": eo, "sheet": sheet, "entities": ents, "qty": round(qty, 4),
-        })
+        branches.append(
+            {
+                "mapping": m,
+                "mode": m.mode,
+                "target": m.block_name or m.layer_name or f"实体#{m.entity_id}",
+                "eo": eo,
+                "sheet": sheet,
+                "entities": ents,
+                "qty": round(qty, 4),
+            }
+        )
     return {"boq_item": item, "branches": branches}

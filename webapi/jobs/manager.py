@@ -9,12 +9,14 @@
 
 Phase 2 简化：单进程 asyncio，job 状态在内存；进程重启会丢（Phase 3 持久化到 PG job 表）
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import traceback
-from typing import Any, Awaitable, Callable, Optional
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from webapi.jobs.models import Job, JobProgress, JobStatus
 
@@ -56,10 +58,10 @@ class JobManager:
         # 给 worker 一点时间响应 cancel
         try:
             await asyncio.wait_for(
-                asyncio.gather(*[t for t in self._workers], return_exceptions=True),
+                asyncio.gather(*list(self._workers), return_exceptions=True),
                 timeout=timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(f"JobManager stop 超时 {timeout}s，强制结束")
         self._workers.clear()
         self._started = False
@@ -115,11 +117,14 @@ class JobManager:
         """执行单个 job"""
         job.status = JobStatus.RUNNING
         from datetime import datetime
+
         job.started_at = datetime.now()
         try:
             func = job.payload.pop("__func__")
+
             def _progress(p: JobProgress) -> None:
                 job.progress = p
+
             result = await func(job, _progress)
             job.result = result
             job.status = JobStatus.COMPLETED
@@ -131,6 +136,7 @@ class JobManager:
             logger.error(f"Job {job.id} failed: {e}\n{traceback.format_exc()}")
         finally:
             from datetime import datetime
+
             job.finished_at = datetime.now()
 
 

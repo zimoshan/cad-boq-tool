@@ -1,19 +1,18 @@
 """上下文推断：文件夹/文件名 → trade/floor。"""
+
 from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Dict, List
-
 
 # 推断 trade（按优先级匹配，先匹配先返回）
-TRADE_HINTS: Dict[str, List[str]] = {
-    "给排水":   ["给排水", "给水", "排水", "WATER", "DRAIN", "PLUMBING", "WS-", "P-", "W-"],
-    "暖通":     ["暖通", "通风", "空调", "HVAC", "风", "Duct", "AHU", "FCU", "H-", "T-"],
+TRADE_HINTS: dict[str, list[str]] = {
+    "给排水": ["给排水", "给水", "排水", "WATER", "DRAIN", "PLUMBING", "WS-", "P-", "W-"],
+    "暖通": ["暖通", "通风", "空调", "HVAC", "风", "Duct", "AHU", "FCU", "H-", "T-"],
     "电气-强电": ["电气", "强电", "配电", "照明", "ELEC", "POWER", "LIGHT", "E-", "LITE"],
     "电气-弱电": ["弱电", "通讯", "电话", "网络", "监控", "BA", "FA", "TELE", "DATA", "T-", "D-"],
-    "消防":     ["消防", "喷淋", "消火栓", "FIRE", "SPRINKLER", "FP-", "F-", "SP-"],
-    "电气":     ["电气", "电施", "ELEC", "E-", "POWER"],  # 通用（catch-all）
+    "消防": ["消防", "喷淋", "消火栓", "FIRE", "SPRINKLER", "FP-", "F-", "SP-"],
+    "电气": ["电气", "电施", "ELEC", "E-", "POWER"],  # 通用（catch-all）
 }
 
 FLOOR_PATTERNS = [
@@ -24,7 +23,7 @@ FLOOR_PATTERNS = [
 ]
 
 
-def scan_folder(folder: Path, extensions=(".dxf", ".dwg")) -> List[Path]:
+def scan_folder(folder: Path, extensions=(".dxf", ".dwg")) -> list[Path]:
     """扫描文件夹下所有 DWG/DXF，按自然顺序排序（01 < 02 < 10）。
 
     同名 DWG 与 DXF 并存时只保留 DWG（与 import_folder.scan_drawings 一致，
@@ -45,12 +44,13 @@ def scan_folder(folder: Path, extensions=(".dxf", ".dwg")) -> List[Path]:
             unique.append(f)
     # 同名优先 DWG：同目录下同名文件，若存在 .dwg 则丢弃 .dxf
     dwg_names = {f.stem.lower() for f in unique if f.suffix.lower() == ".dwg"}
-    unique = [f for f in unique
-              if f.suffix.lower() != ".dxf" or f.stem.lower() not in dwg_names]
+    unique = [f for f in unique if f.suffix.lower() != ".dxf" or f.stem.lower() not in dwg_names]
+
     # 自然序排序（数字感知）
     def natural_key(p: Path) -> list:
         parts = re.split(r"(\d+)", p.name.lower())
         return [int(t) if t.isdigit() else t for t in parts]
+
     unique.sort(key=natural_key)
     return unique
 

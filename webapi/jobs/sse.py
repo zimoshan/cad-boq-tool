@@ -1,12 +1,13 @@
 """SSE 端点支持（Server-Sent Events）"""
+
 from __future__ import annotations
 
 import asyncio
 import json
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 from webapi.jobs.manager import job_manager
-from webapi.jobs.models import Job, JobStatus
+from webapi.jobs.models import JobStatus
 
 
 async def job_event_stream(job_id: str, poll_interval: float = 0.5) -> AsyncGenerator[str, None]:

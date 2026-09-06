@@ -1,4 +1,5 @@
 """extraction 域 service（Phase 2.2 包装 app.engineering）"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -6,7 +7,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.engineering.extractor import extract_and_store_engineering_objects
-from webapi.services.base import NotFoundError, ServiceError
+from webapi.services.base import ServiceError
 
 
 async def run_extraction(

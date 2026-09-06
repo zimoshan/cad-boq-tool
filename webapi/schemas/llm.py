@@ -1,13 +1,15 @@
 """llm 域 schema"""
+
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 
 class LlmSettingsRead(BaseModel):
     """llm_settings 单例表读取（PG/PG-asyncio 同步）"""
+
     model_config = {"protected_namespaces": ()}  # 允许 model_version 字段
     id: int = 1
     active_backend: str = "ollama"
@@ -34,25 +36,26 @@ class LlmSettingsRead(BaseModel):
 
 class LlmSettingsUpdate(BaseModel):
     """部分字段更新"""
-    active_backend: Optional[str] = None
-    ollama_host: Optional[str] = None
-    ollama_model: Optional[str] = None
-    dashscope_api_key: Optional[str] = None
-    dashscope_model: Optional[str] = None
-    openai_api_key: Optional[str] = None
-    openai_model: Optional[str] = None
-    deepseek_api_key: Optional[str] = None
-    deepseek_model: Optional[str] = None
-    custom_base_url: Optional[str] = None
-    custom_api_key: Optional[str] = None
-    custom_model: Optional[str] = None
-    custom_embedding_model: Optional[str] = None
-    fallback_enabled: Optional[int] = None
-    fallback_backend: Optional[str] = None
-    quality_threshold: Optional[float] = None
-    temperature: Optional[float] = None
-    timeout: Optional[int] = None
-    max_tokens: Optional[int] = None
+
+    active_backend: str | None = None
+    ollama_host: str | None = None
+    ollama_model: str | None = None
+    dashscope_api_key: str | None = None
+    dashscope_model: str | None = None
+    openai_api_key: str | None = None
+    openai_model: str | None = None
+    deepseek_api_key: str | None = None
+    deepseek_model: str | None = None
+    custom_base_url: str | None = None
+    custom_api_key: str | None = None
+    custom_model: str | None = None
+    custom_embedding_model: str | None = None
+    fallback_enabled: int | None = None
+    fallback_backend: str | None = None
+    quality_threshold: float | None = None
+    temperature: float | None = None
+    timeout: int | None = None
+    max_tokens: int | None = None
 
 
 class ChatRequest(BaseModel):

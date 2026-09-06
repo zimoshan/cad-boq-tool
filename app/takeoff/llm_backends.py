@@ -7,34 +7,36 @@
 - DeepSeekBackend：DeepSeek-V3
 - CustomOpenAIBackend：任何 OpenAI 兼容端点
 """
+
 from __future__ import annotations
 
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 @dataclass
 class LLMConfig:
     """LLM 后端配置（OpenAI 兼容协议）"""
-    primary_backend: str = "custom"            # 固定 custom（OpenAI 兼容）
+
+    primary_backend: str = "custom"  # 固定 custom（OpenAI 兼容）
     primary_model: str = ""
     ollama_host: str = "http://127.0.0.1:11434"
 
-    fallback_backend: Optional[str] = None      # 主后端质量差时调
-    fallback_model: Optional[str] = None
+    fallback_backend: str | None = None  # 主后端质量差时调
+    fallback_model: str | None = None
 
-    api_keys: dict = field(default_factory=dict)   # {"custom": "sk-xxx"}
+    api_keys: dict = field(default_factory=dict)  # {"custom": "sk-xxx"}
     custom_endpoints: dict = field(default_factory=dict)  # {"custom": {"base_url", "model", "embedding_model"}}
 
     # fallback 策略
     auto_fallback: bool = True
-    quality_threshold: float = 0.7       # 条目 confidence < 此值触发重新评估
+    quality_threshold: float = 0.7  # 条目 confidence < 此值触发重新评估
 
 
 class LLMBackend(ABC):
     """LLM 后端抽象基类"""
+
     name: str = "abstract"
     is_local: bool = False
 
@@ -54,6 +56,7 @@ class LLMBackend(ABC):
 
 class OllamaBackend(LLMBackend):
     """本地 Ollama 后端"""
+
     name = "ollama"
     is_local = True
 
@@ -92,6 +95,7 @@ class OllamaBackend(LLMBackend):
     def is_available(self) -> bool:
         try:
             import urllib.request
+
             with urllib.request.urlopen(f"{self.host}/api/tags", timeout=3) as r:
                 return r.status == 200
         except Exception:
@@ -100,6 +104,7 @@ class OllamaBackend(LLMBackend):
 
 class OpenAICompatibleBackend(LLMBackend):
     """OpenAI 兼容 API 后端基类（阿里/DeepSeek/OpenAI/自定义）"""
+
     is_local = False
 
     def __init__(self, name: str, model: str, api_key: str, base_url: str):
@@ -122,13 +127,16 @@ class OpenAICompatibleBackend(LLMBackend):
         content = [{"type": "text", "text": user}]
         if images:
             import base64
+
             for img_path in images:
                 with open(img_path, "rb") as f:
                     b64 = base64.b64encode(f.read()).decode()
-                content.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
-                })
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                    }
+                )
 
         t0 = time.time()
         try:
@@ -156,6 +164,7 @@ class OpenAICompatibleBackend(LLMBackend):
 
 class DashScopeBackend(OpenAICompatibleBackend):
     """阿里云 DashScope（Qwen-VL-Max）"""
+
     name = "dashscope"
 
     def __init__(self, api_key: str, model: str = "qwen-vl-max-0809"):
@@ -169,6 +178,7 @@ class DashScopeBackend(OpenAICompatibleBackend):
 
 class OpenAIBackend(OpenAICompatibleBackend):
     """OpenAI 后端"""
+
     name = "openai"
 
     def __init__(self, api_key: str, model: str = ""):
@@ -185,6 +195,7 @@ class OpenAIBackend(OpenAICompatibleBackend):
 
 class DeepSeekBackend(OpenAICompatibleBackend):
     """DeepSeek 后端"""
+
     name = "deepseek"
 
     def __init__(self, api_key: str, model: str = ""):
@@ -200,6 +211,7 @@ class DeepSeekBackend(OpenAICompatibleBackend):
 
 class CustomOpenAIBackend(OpenAICompatibleBackend):
     """自定义 OpenAI 兼容端点（Ollama / LocalAI / vLLM / LM Studio 等）"""
+
     name = "custom"
 
     def __init__(self, base_url: str, api_key: str, model: str):
@@ -220,7 +232,9 @@ def create_backend(name: str, config: LLMConfig) -> LLMBackend:
     if name == "openai":
         return OpenAIBackend(api_key=config.api_keys.get("openai", ""), model=config.primary_model or "gpt-4o-mini")
     if name == "deepseek":
-        return DeepSeekBackend(api_key=config.api_keys.get("deepseek", ""), model=config.primary_model or "deepseek-chat")
+        return DeepSeekBackend(
+            api_key=config.api_keys.get("deepseek", ""), model=config.primary_model or "deepseek-chat"
+        )
     if name == "custom":
         ep = config.custom_endpoints.get("custom", {})
         return CustomOpenAIBackend(

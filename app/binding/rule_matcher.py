@@ -8,22 +8,23 @@
 关键词来源：EO 的 block_name 分词 / layer_name / specification / system / category；
 BOQ 侧匹配 code + description + unit。
 """
+
 from __future__ import annotations
 
 import re
 
 from .. import db
+from ..engineering.classifier import infer_discipline, infer_system
 from ..models import EngineeringObject
-from ..engineering.classifier import infer_system, infer_discipline
-from .text_norm import normalize, compact, contains_spec, string_similarity
+from .text_norm import compact, contains_spec, normalize, string_similarity
 
 # 命中加权
-W_SYSTEM = 0.6        # system 词命中（如 CCTV）
-W_SPEC = 0.4          # 规格命中（如 4MP / DN100）
-W_BLOCK_WORD = 0.3    # 块名分词命中（如 CAM）
-W_LAYER_WORD = 0.25   # 图层名分词命中
-W_CATEGORY = 0.2      # 中文大类命中
-W_STRONG = 0.7        # 块名≈清单描述整串近似（2026-08-28 2.1.2，≥RULE_STRONG_MIN）
+W_SYSTEM = 0.6  # system 词命中（如 CCTV）
+W_SPEC = 0.4  # 规格命中（如 4MP / DN100）
+W_BLOCK_WORD = 0.3  # 块名分词命中（如 CAM）
+W_LAYER_WORD = 0.25  # 图层名分词命中
+W_CATEGORY = 0.2  # 中文大类命中
+W_STRONG = 0.7  # 块名≈清单描述整串近似（2026-08-28 2.1.2，≥RULE_STRONG_MIN）
 STRONG_SIM_MIN = 0.85  # 整串相似度 ≥ 此值才算「几乎一致」强匹配
 MAX_RESULTS = 5
 
@@ -57,8 +58,9 @@ def eo_keywords(eo: EngineeringObject) -> list:
     return kws
 
 
-def _score_boq(boq_text: str, kws: list, system: str, spec: str,
-               ref_names: list = None, desc_norm: str = "") -> tuple[float, list]:
+def _score_boq(
+    boq_text: str, kws: list, system: str, spec: str, ref_names: list = None, desc_norm: str = ""
+) -> tuple[float, list]:
     """返回 (score, 命中的关键词)
 
     字段规范化（P1）：文本先经 text_norm 规范（全角→半角/大写），规格命中
@@ -77,7 +79,7 @@ def _score_boq(boq_text: str, kws: list, system: str, spec: str,
     hits = []
     score = 0.0
     # 短语级：块名 与 Description 高度近似 → 强分 + 计入 reason
-    for ref in (ref_names or []):
+    for ref in ref_names or []:
         if not ref:
             continue
         sim = string_similarity(ref, phrase_base)
@@ -108,10 +110,13 @@ def historical_confirmed(project_id: int, eo: EngineeringObject) -> list:
         ceo = db.get_engineering_object(c.engineering_object_id)
         if not ceo:
             continue
-        same = (eo.block_name and ceo.block_name == eo.block_name) or \
-               (eo.layer_name and ceo.layer_name == eo.layer_name)
+        same = (eo.block_name and ceo.block_name == eo.block_name) or (
+            eo.layer_name and ceo.layer_name == eo.layer_name
+        )
         if same:
-            out.append((c.boq_item_id, f"历史确认复用: 同{'块' if eo.block_name else '图层'} {eo.block_name or eo.layer_name}"))
+            out.append(
+                (c.boq_item_id, f"历史确认复用: 同{'块' if eo.block_name else '图层'} {eo.block_name or eo.layer_name}")
+            )
     return out
 
 
@@ -156,9 +161,13 @@ def match_rule(project_id: int, eo: EngineeringObject, items: list = None) -> li
         if disc and _boq_discipline_conflict(it, disc):
             continue
         score, hits = _score_boq(
-            text, kws, sys_name, eo.specification,
+            text,
+            kws,
+            sys_name,
+            eo.specification,
             ref_names=[eo.block_name, eo.layer_name],
-            desc_norm=normalize(it.description or ""))
+            desc_norm=normalize(it.description or ""),
+        )
         if score > 0 and hits:
             reason = f"规则命中: {', '.join(hits[:4])}（BOQ {it.code}）"
             scored.append((it.id, score, reason))

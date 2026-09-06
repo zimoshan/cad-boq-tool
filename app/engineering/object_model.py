@@ -3,6 +3,7 @@
 EngineeringObject 本体定义在 app/models.py（与表结构一一对应），
 此处提供合法取值常量与便捷构造/校验函数。
 """
+
 from __future__ import annotations
 
 from ..models import EngineeringObject
@@ -20,12 +21,24 @@ UNIT_BY_TYPE = {"equipment": "个", "linear": "m", "area": "m²"}
 SOURCES = ("rule", "llm", "manual")
 
 
-def make_engineering_object(project_id: int, sheet_id: int = 0, object_type: str = "equipment",
-                            discipline: str = "", system: str = "", subsystem: str = "",
-                            block_name: str = "", layer_name: str = "", tag: str = "",
-                            specification: str = "", material: str = "", unit: str = "",
-                            quantity_rule: str = "count", confidence: float = 0.0,
-                            source: str = "rule", entity_ids: list = None) -> EngineeringObject:
+def make_engineering_object(
+    project_id: int,
+    sheet_id: int = 0,
+    object_type: str = "equipment",
+    discipline: str = "",
+    system: str = "",
+    subsystem: str = "",
+    block_name: str = "",
+    layer_name: str = "",
+    tag: str = "",
+    specification: str = "",
+    material: str = "",
+    unit: str = "",
+    quantity_rule: str = "count",
+    confidence: float = 0.0,
+    source: str = "rule",
+    entity_ids: list = None,
+) -> EngineeringObject:
     """构造 EngineeringObject（含默认值与校验修正）"""
     if object_type not in OBJECT_TYPES:
         raise ValueError(f"非法 object_type: {object_type}（可选 {OBJECT_TYPES}）")
@@ -34,11 +47,20 @@ def make_engineering_object(project_id: int, sheet_id: int = 0, object_type: str
     if source not in SOURCES:
         raise ValueError(f"非法 source: {source}（可选 {SOURCES}）")
     return EngineeringObject(
-        project_id=project_id, sheet_id=sheet_id, object_type=object_type,
-        discipline=discipline, system=system, subsystem=subsystem,
-        block_name=block_name, layer_name=layer_name, tag=tag,
-        specification=specification, material=material,
+        project_id=project_id,
+        sheet_id=sheet_id,
+        object_type=object_type,
+        discipline=discipline,
+        system=system,
+        subsystem=subsystem,
+        block_name=block_name,
+        layer_name=layer_name,
+        tag=tag,
+        specification=specification,
+        material=material,
         unit=unit or UNIT_BY_TYPE.get(object_type, ""),
-        quantity_rule=quantity_rule, confidence=max(0.0, min(1.0, confidence)),
-        source=source, entity_ids=list(entity_ids or []),
+        quantity_rule=quantity_rule,
+        confidence=max(0.0, min(1.0, confidence)),
+        source=source,
+        entity_ids=list(entity_ids or []),
     )

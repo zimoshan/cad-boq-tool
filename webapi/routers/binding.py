@@ -1,4 +1,5 @@
 """/api/binding 路由（候选生成 + 确认/拒绝）"""
+
 # 不使用 `from __future__ import annotations`：Pydantic 2.8 + FastAPI 0.115 解析
 # type hints 时 namespace 不含 forward ref 名称（_types_namespace 不取 module globals），
 # 即时求值 annotation 可避免此问题。

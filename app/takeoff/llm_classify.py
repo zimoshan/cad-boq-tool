@@ -5,12 +5,11 @@ Phase 22A-3：
 - 鲁棒 JSON 解析
 - 0 依赖 ollama（运行时 import）
 """
+
 from __future__ import annotations
 
 import json
 import re
-from typing import Optional
-
 
 SYSTEM_PROMPT = """你是中国工程造价师，专长 CAD 图纸算量。
 
@@ -54,9 +53,13 @@ USER_PROMPT_TEMPLATE = """# 项目
 """
 
 
-def build_prompt(agg_dict: dict, project_type: str = "医院", region: str = "北京",
-                 specialty: str = "给排水+暖通+电气",
-                 block_legend: dict = None) -> tuple[str, str]:
+def build_prompt(
+    agg_dict: dict,
+    project_type: str = "医院",
+    region: str = "北京",
+    specialty: str = "给排水+暖通+电气",
+    block_legend: dict = None,
+) -> tuple[str, str]:
     """构建 (system_prompt, user_prompt)
 
     Args:
@@ -68,9 +71,10 @@ def build_prompt(agg_dict: dict, project_type: str = "医院", region: str = "�
             if not (row.get("device_type") or row.get("category")):
                 continue
             lines.append(
-                f"- 块[{bname}] => 类型:{row.get('device_type','')} "
-                f"类别:{row.get('category','')} 规格:{row.get('spec','')} "
-                f"单位:{row.get('unit','个')} 计量:{row.get('count_rule','count')}")
+                f"- 块[{bname}] => 类型:{row.get('device_type', '')} "
+                f"类别:{row.get('category', '')} 规格:{row.get('spec', '')} "
+                f"单位:{row.get('unit', '个')} 计量:{row.get('count_rule', 'count')}"
+            )
         section = "\n".join(lines) if lines else "（无）"
     else:
         section = "（无）"
@@ -86,7 +90,7 @@ def build_prompt(agg_dict: dict, project_type: str = "医院", region: str = "�
     return SYSTEM_PROMPT, user
 
 
-def parse_json_robust(content: str) -> Optional[dict]:
+def parse_json_robust(content: str) -> dict | None:
     """鲁棒 JSON 解析：处理 LLM 偶尔夹带 ```json 块、前后多余文字等情况"""
     if not content:
         return None
@@ -118,7 +122,7 @@ def parse_json_robust(content: str) -> Optional[dict]:
             depth -= 1
             if depth == 0:
                 try:
-                    return json.loads(content[start:i + 1])
+                    return json.loads(content[start : i + 1])
                 except json.JSONDecodeError:
                     break
     return None
@@ -135,17 +139,19 @@ def validate_item(item: dict) -> bool:
         return False
     if not (0 <= item["confidence"] <= 1):
         return False
-    if item["unit"] not in ("m", "m²", "m3", "个", "kg", "m2"):
-        return False
-    return True
+    return item["unit"] in ("m", "m²", "m3", "个", "kg", "m2")
 
 
-def llm_classify_ollama(agg_dict: dict, model: str = "qwen2.5:7b",
-                        host: str = "http://localhost:11434",
-                        project_type: str = "医院", region: str = "北京",
-                        specialty: str = "给排水+暖通+电气",
-                        timeout: int = 120,
-                        block_legend: dict = None) -> dict:
+def llm_classify_ollama(
+    agg_dict: dict,
+    model: str = "qwen2.5:7b",
+    host: str = "http://localhost:11434",
+    project_type: str = "医院",
+    region: str = "北京",
+    specialty: str = "给排水+暖通+电气",
+    timeout: int = 120,
+    block_legend: dict = None,
+) -> dict:
     """调用本地 Ollama，返回 {content, tokens_in, tokens_out, latency_ms, parsed_items}
 
     Args:
@@ -156,10 +162,10 @@ def llm_classify_ollama(agg_dict: dict, model: str = "qwen2.5:7b",
         RuntimeError: 调用失败或解析失败
     """
     import time
+
     import ollama
 
-    system, user = build_prompt(agg_dict, project_type, region, specialty,
-                                block_legend=block_legend)
+    system, user = build_prompt(agg_dict, project_type, region, specialty, block_legend=block_legend)
 
     # 用 Client 实例显式指定 host（避免模块级 ollama.chat() 默认走 IPv6 失败）
     client = ollama.Client(host=host)
@@ -213,25 +219,30 @@ def is_ollama_available(host: str = "http://localhost:11434") -> bool:
     """检查 Ollama 是否可达"""
     try:
         import urllib.request
+
         with urllib.request.urlopen(f"{host}/api/tags", timeout=3) as r:
             return r.status == 200
     except Exception:
         return False
 
 
-def llm_classify_openai(agg_dict: dict, project_id: int = 0,
-                        project_type: str = "医院", region: str = "北京",
-                        specialty: str = "给排水+暖通+电气",
-                        block_legend: dict = None) -> dict:
+def llm_classify_openai(
+    agg_dict: dict,
+    project_id: int = 0,
+    project_type: str = "医院",
+    region: str = "北京",
+    specialty: str = "给排水+暖通+电气",
+    block_legend: dict = None,
+) -> dict:
     """调用 OpenAI 兼容端点（走统一 runner），返回与 llm_classify_ollama 相同结构。
 
     配置（base_url/api_key/model）从 app.llm.settings.load_active() 读取。
     """
     import time
+
     from ..llm.runner import run_llm_with_retry
 
-    system, user = build_prompt(agg_dict, project_type, region, specialty,
-                                block_legend=block_legend)
+    system, user = build_prompt(agg_dict, project_type, region, specialty, block_legend=block_legend)
 
     def _validate(content: str):
         parsed = parse_json_robust(content)
@@ -241,8 +252,8 @@ def llm_classify_openai(agg_dict: dict, project_id: int = 0,
 
     t0 = time.time()
     resp = run_llm_with_retry(
-        project_id, task_type="classify", system=system, user=user,
-        validator=_validate, prompt_version="classify-v1")
+        project_id, task_type="classify", system=system, user=user, validator=_validate, prompt_version="classify-v1"
+    )
     t1 = time.time()
 
     content = resp.get("content", "")
@@ -273,7 +284,9 @@ def llm_classify_openai(agg_dict: dict, project_id: int = 0,
 def list_ollama_models(host: str = "http://localhost:11434") -> list:
     """列出 Ollama 可用模型"""
     try:
-        import urllib.request, json
+        import json
+        import urllib.request
+
         with urllib.request.urlopen(f"{host}/api/tags", timeout=3) as r:
             data = json.loads(r.read())
             return [m["name"] for m in data.get("models", [])]

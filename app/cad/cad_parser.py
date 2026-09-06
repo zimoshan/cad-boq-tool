@@ -1,4 +1,5 @@
 """CAD 解析：ezdxf 读取 DXF → Entity 模型 + 图层/块索引"""
+
 from __future__ import annotations
 
 import json
@@ -7,23 +8,23 @@ from dataclasses import dataclass, field
 
 from ezdxf import colors as ezcolors
 
-from ..models import Entity, LayerInfo, BlockInfo
+from ..models import BlockInfo, Entity, LayerInfo
 from . import geometry as G
 
 
 @dataclass
 class ParsedDrawing:
-    entities: list = field(default_factory=list)          # list[Entity]
-    layers: dict = field(default_factory=dict)            # name -> count
-    layer_colors: dict = field(default_factory=dict)      # name -> (r,g,b)  Phase 2
-    blocks: dict = field(default_factory=dict)            # block name -> [geom_json, ...]
-    block_refs: dict = field(default_factory=dict)        # block name -> INSERT 引用数
-    blocks_with_count: dict = field(default_factory=dict) # block name -> Entity(INSERT) 列表
+    entities: list = field(default_factory=list)  # list[Entity]
+    layers: dict = field(default_factory=dict)  # name -> count
+    layer_colors: dict = field(default_factory=dict)  # name -> (r,g,b)  Phase 2
+    blocks: dict = field(default_factory=dict)  # block name -> [geom_json, ...]
+    block_refs: dict = field(default_factory=dict)  # block name -> INSERT 引用数
+    blocks_with_count: dict = field(default_factory=dict)  # block name -> Entity(INSERT) 列表
     # B5 S3 单位标定（v2.0 §2.5，2026-09-06）
-    units: str = ""                                       # "mm" / "cm" / "m" / "inch" / "feet" / "unitless"
-    insunits_code: int = 0                                # 原始 DXF $INSUNITS 编码（0=无 1=inch 4=mm 5=cm 6=m）
+    units: str = ""  # "mm" / "cm" / "m" / "inch" / "feet" / "unitless"
+    insunits_code: int = 0  # 原始 DXF $INSUNITS 编码（0=无 1=inch 4=mm 5=cm 6=m）
     # B5 S4 图纸类型（v2.0 §5.1，drawing_type 字段）
-    drawing_type: str = ""                                # plan / schematic / detail / legend / schedule
+    drawing_type: str = ""  # plan / schematic / detail / legend / schedule
 
     @property
     def entity_count(self) -> int:
@@ -31,8 +32,20 @@ class ParsedDrawing:
 
 
 # 可渲染/可计量的实体类型
-GEOMETRIC_TYPES = {"LINE", "LWPOLYLINE", "POLYLINE", "ARC", "CIRCLE", "SPLINE",
-                   "ELLIPSE", "INSERT", "HATCH", "TEXT", "MTEXT", "POINT"}
+GEOMETRIC_TYPES = {
+    "LINE",
+    "LWPOLYLINE",
+    "POLYLINE",
+    "ARC",
+    "CIRCLE",
+    "SPLINE",
+    "ELLIPSE",
+    "INSERT",
+    "HATCH",
+    "TEXT",
+    "MTEXT",
+    "POINT",
+}
 
 
 # B5 S3 单位标定：DXF $INSUNITS → 单位字符串
@@ -64,9 +77,21 @@ def _detect_units(raw_doc) -> tuple[str, int]:
 
 # B5 S4 归一化黑名单：DETAIL / LEGEND / SCHEDULE / TITLE 图层
 LAYER_BLACKLIST_KEYWORDS = (
-    "DETAIL", "LEGEND", "SCHEDULE", "TITLE", "BORDER",
-    "图例", "详图", "标题", "边框", "说明", "目录", "INDEX",
-    "FRAME", "NORTH", "SCALE BAR",  # 指北针、比例尺
+    "DETAIL",
+    "LEGEND",
+    "SCHEDULE",
+    "TITLE",
+    "BORDER",
+    "图例",
+    "详图",
+    "标题",
+    "边框",
+    "说明",
+    "目录",
+    "INDEX",
+    "FRAME",
+    "NORTH",
+    "SCALE BAR",  # 指北针、比例尺
 )
 
 
@@ -123,7 +148,11 @@ def _vec2(p):
 def _entity_geom(entity) -> dict:
     """提取实体几何 → dict（可 JSON 序列化）；返回 (geom, length, area, bbox)"""
     # 兼容 _EntityWrapper（属性） 和 原生 ezdxf 实体（方法）
-    etype = entity.dxftype if hasattr(entity, "dxftype") and not callable(getattr(entity, "dxftype", None)) else entity.dxftype()
+    etype = (
+        entity.dxftype
+        if hasattr(entity, "dxftype") and not callable(getattr(entity, "dxftype", None))
+        else entity.dxftype()
+    )
     g = {"type": etype.lower()}
     length = 0.0
     area = 0.0
@@ -144,8 +173,7 @@ def _entity_geom(entity) -> dict:
             # ezdwg: 从 dxf dict 取
             d = entity.dxf
             points_3d = d.get("points") or []
-            raw = [(p[0], p[1], 0.0, 0.0, p[4]) if len(p) >= 5 else (p[0], p[1], 0.0, 0.0, 0.0)
-                   for p in points_3d]
+            raw = [(p[0], p[1], 0.0, 0.0, p[4]) if len(p) >= 5 else (p[0], p[1], 0.0, 0.0, 0.0) for p in points_3d]
         points = [(p[0], p[1]) for p in raw]
         bulges = [p[4] if len(p) > 4 else 0.0 for p in raw]
         closed = bool(entity.closed)
@@ -175,11 +203,9 @@ def _entity_geom(entity) -> dict:
         r = entity.dxf.radius
         sa = math.radians(entity.dxf.start_angle)
         ea = math.radians(entity.dxf.end_angle)
-        g.update({"center": c, "radius": r,
-                  "start_angle": entity.dxf.start_angle, "end_angle": entity.dxf.end_angle})
+        g.update({"center": c, "radius": r, "start_angle": entity.dxf.start_angle, "end_angle": entity.dxf.end_angle})
         length = G.arc_length(r, sa, ea)
-        pts = [(c[0] + r * math.cos(sa), c[1] + r * math.sin(sa)),
-               (c[0] + r * math.cos(ea), c[1] + r * math.sin(ea))]
+        pts = [(c[0] + r * math.cos(sa), c[1] + r * math.sin(sa)), (c[0] + r * math.cos(ea), c[1] + r * math.sin(ea))]
 
     elif etype == "CIRCLE":
         c = _vec2(entity.dxf.center)
@@ -200,9 +226,15 @@ def _entity_geom(entity) -> dict:
         major = _vec2(entity.dxf.major_axis)
         # 字段名兼容：ezdxf 用 ratio，ezdwg 用 axis_ratio
         ratio = entity.dxf.get("axis_ratio") or entity.dxf.get("ratio")
-        g.update({"center": c, "major": major, "ratio": ratio,
-                  "start": _vec2(entity.dxf.start_point) if hasattr(entity, "start_point") else None,
-                  "end": _vec2(entity.dxf.end_point) if hasattr(entity, "end_point") else None})
+        g.update(
+            {
+                "center": c,
+                "major": major,
+                "ratio": ratio,
+                "start": _vec2(entity.dxf.start_point) if hasattr(entity, "start_point") else None,
+                "end": _vec2(entity.dxf.end_point) if hasattr(entity, "end_point") else None,
+            }
+        )
         if ratio is None:
             # ELLIPSE 数据不完整，跳过
             return None
@@ -221,11 +253,18 @@ def _entity_geom(entity) -> dict:
             attribs = entity.attribs or {}
         except Exception:
             attribs = {}
-        g.update({"block": block_name, "insert": ins,
-                  "attribs": attribs,
-                  "scale": [entity.dxf.xscale if entity.dxf.hasattr("xscale") else 1.0,
-                            entity.dxf.yscale if entity.dxf.hasattr("yscale") else 1.0],
-                  "rotation": entity.dxf.rotation if entity.dxf.hasattr("rotation") else 0.0})
+        g.update(
+            {
+                "block": block_name,
+                "insert": ins,
+                "attribs": attribs,
+                "scale": [
+                    entity.dxf.xscale if entity.dxf.hasattr("xscale") else 1.0,
+                    entity.dxf.yscale if entity.dxf.hasattr("yscale") else 1.0,
+                ],
+                "rotation": entity.dxf.rotation if entity.dxf.hasattr("rotation") else 0.0,
+            }
+        )
         pts = [tuple(ins)]
 
     elif etype == "HATCH":
@@ -256,8 +295,7 @@ def _entity_geom(entity) -> dict:
             pts = [tuple(ins)] if ins else [(0, 0)]
         except Exception:
             pts = [(0, 0)]
-        g.update({"pos": list(pts[0]),
-                  "text": getattr(entity, "text", "")[:200] if hasattr(entity, "text") else ""})
+        g.update({"pos": list(pts[0]), "text": getattr(entity, "text", "")[:200] if hasattr(entity, "text") else ""})
 
     elif etype == "POINT":
         p = _vec2(entity.dxf.location)
@@ -315,8 +353,7 @@ def _apply_insert_transform(geom: dict, insert: list, scale: list, rot: float) -
     if "major" in g and isinstance(g["major"], list):
         mx, my = g["major"]
         # 旋转向量 + 缩放
-        g["major"] = [mx * sx * c - my * sy * s,
-                      mx * sx * s + my * sy * c]
+        g["major"] = [mx * sx * c - my * sy * s, mx * sx * s + my * sy * c]
 
     # HATCH
     if "boundary" in g and isinstance(g["boundary"], list):
@@ -414,6 +451,7 @@ def parse_dxf(path: str, progress_callback=None) -> ParsedDrawing:
     - .dxf → ezdxf（DXF R12-R2018）
     """
     from .reader import read_cad
+
     doc = read_cad(path)
     raw_doc = doc.raw
     msp = doc.modelspace()
@@ -436,7 +474,7 @@ def parse_dxf(path: str, progress_callback=None) -> ParsedDrawing:
     try:
         total = len(msp)
     except Exception:
-        total = None   # ezdwg 无 len 且解码受限时容错，进度回调用 None
+        total = None  # ezdwg 无 len 且解码受限时容错，进度回调用 None
     for idx, entity in enumerate(msp):
         if progress_callback and idx % 1000 == 0:
             progress_callback(idx, total)
@@ -488,10 +526,8 @@ def parse_dxf(path: str, progress_callback=None) -> ParsedDrawing:
 
 
 def layer_infos(drawing: ParsedDrawing) -> list:
-    return [LayerInfo(name=k, entity_count=v) for k, v in
-            sorted(drawing.layers.items(), key=lambda x: -x[1])]
+    return [LayerInfo(name=k, entity_count=v) for k, v in sorted(drawing.layers.items(), key=lambda x: -x[1])]
 
 
 def block_infos(drawing: ParsedDrawing) -> list:
-    return [BlockInfo(name=k, entity_count=v) for k, v in
-            sorted(drawing.block_refs.items(), key=lambda x: -x[1])]
+    return [BlockInfo(name=k, entity_count=v) for k, v in sorted(drawing.block_refs.items(), key=lambda x: -x[1])]

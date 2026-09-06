@@ -5,6 +5,7 @@
 - 明确要求模型不计算数值（数量由确定性计量引擎负责）；
 - 版本号 BINDING_PROMPT_VERSION 在 config.py，写入 llm_run 审计。
 """
+
 from __future__ import annotations
 
 BINDING_SYSTEM_PROMPT = """你是机电工程 BOQ 绑定专家。任务：判断图纸上的一个 CAD 对象对应清单中的哪一条 BOQ 清单项。
@@ -129,8 +130,9 @@ CLASSIFY_USER_TEMPLATE = """# CAD 对象
 严格 JSON，discipline 必须从给定取值中选择。"""
 
 
-def build_classify_prompt(block_name: str = "", layer_name: str = "",
-                          specification: str = "", tag: str = "") -> tuple[str, str]:
+def build_classify_prompt(
+    block_name: str = "", layer_name: str = "", specification: str = "", tag: str = ""
+) -> tuple[str, str]:
     """构建分类 (system, user)。"""
     user = CLASSIFY_USER_TEMPLATE.format(
         block_name=block_name or "-",

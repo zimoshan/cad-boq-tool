@@ -12,6 +12,7 @@
   - parse_sheet_blocks_ref(blocks_json_str) -> dict | None（解析 sheet.blocks_json 字段）
   - serialize_sheet_blocks_ref(sha256, block_count, size_bytes) -> str
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -50,11 +51,13 @@ def write_block_geometry(blocks_dict: dict[str, list[dict[str, Any]]]) -> str:
     # 序列化每个 block 的 geom 列表为 JSON 字符串（parquet 单元格存字符串）
     rows = []
     for block_name, geoms in blocks_dict.items():
-        rows.append({
-            "block_name": block_name,
-            "geom_count": len(geoms),
-            "geom_json": json.dumps(geoms, ensure_ascii=False),
-        })
+        rows.append(
+            {
+                "block_name": block_name,
+                "geom_count": len(geoms),
+                "geom_json": json.dumps(geoms, ensure_ascii=False),
+            }
+        )
     table = pa.Table.from_pylist(rows)
 
     # 算 sha256（基于规范化 JSON，确保相同内容产生相同 hash）

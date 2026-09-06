@@ -4,12 +4,13 @@ Phase 0：
   - POST /api/cad/parse：上传 DWG/DXF → 解析 → 入库
   - GET  /api/cad/viewport?bbox=...：B4 空间查询
 """
+
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cad.cad_parser import parse_dxf
@@ -28,13 +29,13 @@ async def parse_cad_file(
     #19 选 A：算法保留（read_cad + parse_dxf），入口重写
     完整实现待 A.2 第 2 批 P0-6~P0-9 落地
     """
-    settings = get_settings()
+    get_settings()
     if not Path(file_path).exists():
         raise NotFoundError("File", file_path)
 
     try:
         # 包装 app/cad/reader.read_cad
-        doc = read_cad(file_path)
+        read_cad(file_path)
         # 包装 app/cad/cad_parser.parse_dxf
         parsed = parse_dxf(file_path)
     except Exception as e:

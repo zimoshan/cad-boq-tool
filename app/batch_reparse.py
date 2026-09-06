@@ -11,8 +11,10 @@
   convert/parse/db/ok/error/missing
 协作取消：cancel_event.set() 后在文件边界停止，进程池 shutdown(cancel_futures=True)
 """
+
 from __future__ import annotations
 
+import contextlib
 import os
 import tempfile
 import threading
@@ -32,6 +34,7 @@ def _parse_worker(dxf_path: str, src_path: str):
     不触碰数据库；主进程稍后从缓存载入完整数据入库。
     """
     from .cad.cad_parser import parse_dxf
+
     try:
         drawing = parse_dxf(dxf_path)
         parse_cache.cache_drawing(src_path, drawing)
@@ -48,9 +51,9 @@ def default_workers() -> int:
 class BatchReparseJob:
     """一次批量重解析任务（在后台 QThread 中调用 run()）。"""
 
-    def __init__(self, project_id: int, progress_cb=None,
-                 cancel_event: threading.Event | None = None,
-                 workers: int | None = None):
+    def __init__(
+        self, project_id: int, progress_cb=None, cancel_event: threading.Event | None = None, workers: int | None = None
+    ):
         self.project_id = project_id
         self.progress_cb = progress_cb
         self.cancel_event = cancel_event or threading.Event()
@@ -59,10 +62,8 @@ class BatchReparseJob:
     # ---------- 内部工具 ----------
     def _report(self, done: int, total: int, filename: str, status: str):
         if self.progress_cb:
-            try:
+            with contextlib.suppress(Exception):
                 self.progress_cb(done, total, filename, status)
-            except Exception:
-                pass
 
     def _cancelled(self) -> bool:
         return self.cancel_event.is_set()
@@ -70,19 +71,18 @@ class BatchReparseJob:
     # ---------- 主流程 ----------
     def run(self) -> dict:
         """Returns: {"total", "ok", "error", "skipped", "errors": [str],
-                    "cancelled": bool, "elapsed": float}"""
+        "cancelled": bool, "elapsed": float}"""
         t0 = time.perf_counter()
         sheets = db.get_sheets(self.project_id)
         total = len(sheets)
-        stats = {"total": total, "ok": 0, "error": 0, "skipped": 0,
-                 "errors": [], "cancelled": False, "elapsed": 0.0}
+        stats = {"total": total, "ok": 0, "error": 0, "skipped": 0, "errors": [], "cancelled": False, "elapsed": 0.0}
         if total == 0:
             stats["elapsed"] = time.perf_counter() - t0
             return stats
 
         # ---- 收集源文件：缺失的立即标记，其余按 DWG/DXF 分流 ----
-        jobs = []              # [(sheet, dxf_path, src_path)]
-        dwg_srcs = []          # (sheet, src_path)，稍后 ezdwg 探测分流
+        jobs = []  # [(sheet, dxf_path, src_path)]
+        dwg_srcs = []  # (sheet, src_path)，稍后 ezdwg 探测分流
         done = 0
         for s in sheets:
             # 源文件优先（DWG 直读优先）；源丢失才回退旧的转换产物 DXF
@@ -101,7 +101,7 @@ class BatchReparseJob:
                 jobs.append((s, src, src))
 
         # ---- 阶段1：DWG 分流——ezdwg 直读优先，探测失败的才走 ODA 转换 ----
-        direct, conv_srcs = [], []   # direct: (sheet, src)；conv_srcs: [src]
+        direct, conv_srcs = [], []  # direct: (sheet, src)；conv_srcs: [src]
         if dwg_srcs:
             if self._cancelled():
                 stats["cancelled"] = True
@@ -114,14 +114,14 @@ class BatchReparseJob:
                     direct.append((s, src))
                 else:
                     import logging
+
                     logging.warning("ezdwg 探测不可读，转 ODA: %s | %s", src, probe_err)
                     conv_srcs.append(src)
             if direct or conv_srcs:
-                self._report(done, total,
-                             f"直读 {len(direct)} 张 / 需转换 {len(conv_srcs)} 张", "convert")
+                self._report(done, total, f"直读 {len(direct)} 张 / 需转换 {len(conv_srcs)} 张", "convert")
 
         for s, src in direct:
-            jobs.append((s, "", src))   # dxf 记空串 = ezdwg 直读，无转换产物
+            jobs.append((s, "", src))  # dxf 记空串 = ezdwg 直读，无转换产物
 
         if conv_srcs:
             if self._cancelled():
@@ -131,20 +131,24 @@ class BatchReparseJob:
             conv_dir = tempfile.mkdtemp(prefix="cadboq_reparse_")
             try:
                 from .cad.dwg import convert_dwgs_batch
+
                 # 已有可用 DXF（dxf_path 仍存在）的直接复用，避免重复转换
                 need_conv, dxf_map = [], {}
                 sheet_by_src = {}
                 for s, src in dwg_srcs:
                     sheet_by_src[src] = s
                     old_dxf = s.dxf_path
-                    if src in conv_srcs and old_dxf and os.path.isfile(old_dxf) and \
-                            Path(old_dxf).suffix.lower() == ".dxf":
+                    if (
+                        src in conv_srcs
+                        and old_dxf
+                        and os.path.isfile(old_dxf)
+                        and Path(old_dxf).suffix.lower() == ".dxf"
+                    ):
                         dxf_map[src] = old_dxf
                     elif src in conv_srcs:
                         need_conv.append(src)
                 if need_conv:
-                    converted = convert_dwgs_batch(need_conv, conv_dir,
-                                                   parallel=min(4, self.workers))
+                    converted = convert_dwgs_batch(need_conv, conv_dir, parallel=min(4, self.workers))
                     dxf_map.update(converted)
                 for src in conv_srcs:
                     dxf = dxf_map.get(src)
@@ -153,8 +157,7 @@ class BatchReparseJob:
                     else:
                         done += 1
                         stats["error"] += 1
-                        stats["errors"].append(
-                            f"{Path(src).name}: DWG→DXF 转换失败（ezdwg 不支持且 ODA 不可用）")
+                        stats["errors"].append(f"{Path(src).name}: DWG→DXF 转换失败（ezdwg 不支持且 ODA 不可用）")
                         self._report(done, total, Path(src).name, "error")
             finally:
                 # 转换产物放 temp，由系统清理；不删 dxf（入库前还要用）
@@ -169,8 +172,7 @@ class BatchReparseJob:
         src_to_sheet = {src: s for s, _, src in jobs}
         if jobs:
             with ProcessPoolExecutor(max_workers=min(self.workers, len(jobs))) as pool:
-                futures = {pool.submit(_parse_worker, dxf, src): src
-                           for s, dxf, src in jobs}
+                futures = {pool.submit(_parse_worker, dxf, src): src for s, dxf, src in jobs}
                 for fut in as_completed(futures):
                     if self._cancelled():
                         pool.shutdown(wait=True, cancel_futures=True)
@@ -196,10 +198,14 @@ class BatchReparseJob:
                     self._report(done, total, sheet.filename, "db")
                     try:
                         import json
+
                         db.update_sheet_parse(
-                            sheet.id, dxf, len(drawing.entities),
+                            sheet.id,
+                            dxf,
+                            len(drawing.entities),
                             len(drawing.layers),
-                            json.dumps(drawing.blocks, ensure_ascii=False))
+                            json.dumps(drawing.blocks, ensure_ascii=False),
+                        )
                         db.replace_entities(sheet.id, drawing.entities)
                         done += 1
                         stats["ok"] += 1

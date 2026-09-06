@@ -1,16 +1,13 @@
 """/api/jobs 路由（Phase 2 JobManager + SSE）"""
 # 不使用 from __future__ import annotations：Pydantic 2.8 + FastAPI 0.115 forward ref 解析问题
-from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from webapi.auth.decorators import requires
-from webapi.db import get_db
 from webapi.jobs.manager import job_manager
-from webapi.jobs.sse import job_event_stream
 from webapi.jobs.models import JobStatus
+from webapi.jobs.sse import job_event_stream
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -43,6 +40,7 @@ async def get_job(job_id: str) -> dict:
 @requires("jobs:write")
 async def submit_job(req: JobSubmitRequest) -> dict:
     """提交一个 Job（Phase 2 占位：func_name 路由待 Phase 2 完整实现）"""
+
     async def _noop(job, progress_cb):
         progress_cb(job.progress.__class__(task_type="noop", done=1, total=1, message="ok"))
         return {"result": "noop done"}
@@ -65,6 +63,7 @@ async def cancel_job(job_id: str) -> dict:
 async def stream_job(job_id: str):
     """SSE 端点：实时推送 job 进度 + 终态"""
     from fastapi.responses import StreamingResponse
+
     return StreamingResponse(
         job_event_stream(job_id),
         media_type="text/event-stream",

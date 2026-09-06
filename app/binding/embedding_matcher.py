@@ -8,8 +8,10 @@
 - P2-3 落盘：向量存 ``~/.cad-boq-tool/embedding_cache/``（npy + meta 指纹），
   **跨会话复用**；BOQ 内容/模型任一变化 → 指纹不符自动重建，无需手动失效。
 """
+
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import threading
@@ -17,13 +19,13 @@ from pathlib import Path
 
 import numpy as np
 
-from .. import db, config
-from ..llm.embeddings import create_embedding_provider, cosine_similarity
+from .. import config, db
+from ..llm.embeddings import cosine_similarity, create_embedding_provider
 from .text_norm import boq_searchable, normalize
 
 # ---- L1 进程内缓存：project_id → (items, boq_vectors) ----
 _BOQ_VECTOR_CACHE: dict[int, tuple] = {}
-_BOQ_CACHE_MAX = 8          # 同时缓存的项目数上限（LRU 语义，超出清最旧）
+_BOQ_CACHE_MAX = 8  # 同时缓存的项目数上限（LRU 语义，超出清最旧）
 _CACHE_LOCK = threading.Lock()
 
 # ---- L2 磁盘缓存（跨会话）：~/.cad-boq-tool/embedding_cache/ ----
@@ -39,13 +41,12 @@ def _boq_fingerprint(items: list) -> str:
     """BOQ 内容指纹：item id + 检索文本，任一变更 → hash 不同 → 缓存自动失效"""
     h = hashlib.sha256()
     for it in items:
-        h.update(f"{it.id}:{boq_searchable(it)}\n".encode("utf-8"))
+        h.update(f"{it.id}:{boq_searchable(it)}\n".encode())
     return h.hexdigest()
 
 
 def _disk_files(project_id: int) -> tuple[Path, Path]:
-    return (_EMBED_CACHE_DIR / f"boq_{project_id}.vectors.npy",
-            _EMBED_CACHE_DIR / f"boq_{project_id}.meta.json")
+    return (_EMBED_CACHE_DIR / f"boq_{project_id}.vectors.npy", _EMBED_CACHE_DIR / f"boq_{project_id}.meta.json")
 
 
 def _load_disk_vectors(project_id: int, provider, items: list):
@@ -54,7 +55,7 @@ def _load_disk_vectors(project_id: int, provider, items: list):
     try:
         if not (vec_path.exists() and meta_path.exists()):
             return None
-        with open(meta_path, "r", encoding="utf-8") as f:
+        with open(meta_path, encoding="utf-8") as f:
             meta = json.load(f)
         if meta.get("fingerprint") != _boq_fingerprint(items):
             return None
@@ -75,12 +76,16 @@ def _save_disk_vectors(project_id: int, provider, items: list, vectors: list) ->
         vec_path.parent.mkdir(parents=True, exist_ok=True)
         np.save(vec_path, np.asarray(vectors, dtype="float32"))
         with open(meta_path, "w", encoding="utf-8") as f:
-            json.dump({
-                "project_id": project_id,
-                "model": _model_key(provider),
-                "fingerprint": _boq_fingerprint(items),
-                "count": len(items),
-            }, f, ensure_ascii=False)
+            json.dump(
+                {
+                    "project_id": project_id,
+                    "model": _model_key(provider),
+                    "fingerprint": _boq_fingerprint(items),
+                    "count": len(items),
+                },
+                f,
+                ensure_ascii=False,
+            )
     except Exception:
         pass
 
@@ -90,10 +95,8 @@ def invalidate_embedding_cache(project_id: int) -> None:
     with _CACHE_LOCK:
         _BOQ_VECTOR_CACHE.pop(project_id, None)
     for p in _disk_files(project_id):
-        try:
+        with contextlib.suppress(Exception):
             p.unlink(missing_ok=True)
-        except Exception:
-            pass
 
 
 def _clear_embedding_cache() -> None:
@@ -152,8 +155,13 @@ def enriched_eo_text(project_id: int, eo) -> str:
     在 block/layer/system/spec/tag 基础上，追加知识库（symbol_library）规格，
     提升召回子集命中真实 BOQ 的概率。
     """
-    parts = [normalize(eo.block_name), normalize(eo.layer_name),
-             normalize(eo.system), normalize(eo.specification), normalize(eo.tag)]
+    parts = [
+        normalize(eo.block_name),
+        normalize(eo.layer_name),
+        normalize(eo.system),
+        normalize(eo.specification),
+        normalize(eo.tag),
+    ]
     try:
         sym = db.get_symbol(project_id, block_name=eo.block_name, layer_name=eo.layer_name)
         if sym:
@@ -195,7 +203,7 @@ def semantic_candidates(project_id: int, eo, top_n: int = None) -> list:
         return []  # 单次失败不阻断流程
 
     scored = []
-    for it, bv in zip(items, boq_vectors):
+    for it, bv in zip(items, boq_vectors, strict=False):
         s = cosine_similarity(ev, bv)
         if s > 0.3:  # 低相似度直接丢弃
             scored.append((it.id, round(s, 4), f"语义相似 {s:.2f}（BOQ {it.code}）"))

@@ -3,10 +3,10 @@
 Phase 0 占位：策略文件 casbin_policy.csv 为空（所有人所有权限）
 Phase 1+ 业务期：按角色加载策略
 """
+
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import casbin
 

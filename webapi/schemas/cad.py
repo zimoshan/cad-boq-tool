@@ -1,7 +1,6 @@
 """CAD 域 schema"""
-from __future__ import annotations
 
-from typing import Optional
+from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -25,13 +24,14 @@ class ViewportEntity(BaseModel):
     dxf_type: str
     layer: str
     block_name: str = ""
-    geom_wkt: Optional[str] = None
+    geom_wkt: str | None = None
     length: float = 0.0
     area: float = 0.0
 
 
 class ViewportQuery(BaseModel):
     """B4 空间查询请求"""
+
     sheet_id: int
     min_x: float
     min_y: float

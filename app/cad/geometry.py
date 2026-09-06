@@ -1,10 +1,12 @@
 """几何计算：长度 / 面积（供计量引擎与解析器使用）"""
+
 from __future__ import annotations
 
 import math
 
 try:
     import numpy as np
+
     HAS_NUMPY = True
 except ImportError:
     HAS_NUMPY = False

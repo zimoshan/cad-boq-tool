@@ -7,6 +7,7 @@ Phase 0：
 B1 修复：BOQ-001 4 种表头识别（v2.0 §2.1，PHASE 0 第 2 批 P0-6 落实）
 B2 扩展：boq_item 模型加 section/item_key/brand/bill_qty/installed_qty/qty_remaining（已在 P0-5 schema 完成）
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -14,7 +15,6 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.boq.boq_parser import parse_boq
-from app.boq.writeback import write_back_quantities
 from webapi.services.base import NotFoundError, ServiceError
 
 
@@ -53,14 +53,21 @@ async def writeback_quantities(
     P0-15 B5 S7 Excel 保真回写（写回 boq_item.measured_qty 不动原 original_qty）
     P4 增强：source_file_path 传入后算 SHA-256 写到 writeback_audit.file_sha256
     """
-    from app.boq.writeback import write_back_quantities as _write_back, compute_file_sha256
+    from app.boq.writeback import compute_file_sha256
+    from app.boq.writeback import write_back_quantities as _write_back
+
     try:
         file_sha = compute_file_sha256(source_file_path) if source_file_path else ""
         # Phase 4 增强：通过 monkey-patch _log_writeback_audit 注入 file_sha256
         import app.boq.writeback as wb_mod
+
         original_log = wb_mod._log_writeback_audit
+
         def _patched_log(project_id, boq_item_id, original_qty, measured_qty, takability, file_sha256=""):
-            return original_log(project_id, boq_item_id, original_qty, measured_qty, takability, file_sha256 or file_sha)
+            return original_log(
+                project_id, boq_item_id, original_qty, measured_qty, takability, file_sha256 or file_sha
+            )
+
         wb_mod._log_writeback_audit = _patched_log
         try:
             result = _write_back(project_id=project_id, project_scale=project_scale)
@@ -86,6 +93,7 @@ async def export_boq_to_excel(
     - overwrite_original=True 时：measured_qty 覆盖 original_qty
     """
     import os
+
     from app.report import export_report
 
     if not output_path:

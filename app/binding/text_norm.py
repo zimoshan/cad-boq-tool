@@ -8,6 +8,7 @@
 
 约定：所有公开函数输入 str|None 输出 str（空输入 → ""）。
 """
+
 from __future__ import annotations
 
 import re

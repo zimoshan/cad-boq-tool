@@ -2,13 +2,14 @@
 
 takeoff 管线：扫描文件夹/单图 → aggregate → LLM 分类 → 跨图去重 → EO 写入
 """
+
 from __future__ import annotations
 
 from typing import Any
 
 from app.takeoff.folder_pipeline import run_folder_pipeline
 from app.takeoff.orchestrator import takeoff_pipeline
-from webapi.services.base import NotFoundError, ServiceError
+from webapi.services.base import ServiceError
 
 
 async def run_single_sheet_takeoff(

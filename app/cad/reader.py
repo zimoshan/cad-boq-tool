@@ -24,11 +24,12 @@
 - 处理：智能 fallback（按 cp1254 / latin-1 / gbk 重新尝试）。若仍不可读则
   返回一个稳定的归一化 key（`__garbled_<hash>__`）以避免相同乱码误归类。
 """
+
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Iterator
 import hashlib
+from collections.abc import Iterator
+from pathlib import Path
 
 # 重新导出内置异常（供调用方统一捕获）
 __all__ = [
@@ -39,8 +40,8 @@ __all__ = [
     "get_backend_info",
     "UnsupportedFormat",
     "FileNotFoundError",  # = builtins.FileNotFoundError
-    "fix_garbled_layer_name",   # Phase 26
-    "is_garbled_layer_name",    # Phase 26
+    "fix_garbled_layer_name",  # Phase 26
+    "is_garbled_layer_name",  # Phase 26
 ]
 
 # ======================================================================
@@ -58,7 +59,8 @@ __all__ = [
 #   - 兜底重命名：返回 "__garbled_<sha1前8>__" 形式的稳定 key，
 #     让相同乱码的多个图层能稳定归到同一桶（避免每次解析 sha 不同）。
 
-_GARBLED_CHARS = {chr(c) for c in range(19968, 40960)}   # CJK Unified Ideographs (0x4E00-0x9FFF)
+_GARBLED_CHARS = {chr(c) for c in range(19968, 40960)}  # CJK Unified Ideographs (0x4E00-0x9FFF)
+
 
 def _has_cjk(s):
     return any((c in _GARBLED_CHARS) for c in s)
@@ -93,9 +95,7 @@ def is_garbled_layer_name(name: str) -> bool:
     #    代价：少数真中文也可能误判（用户可手动调整）。
     cps = [ord(c) for c in cjk_chars]
     span = max(cps) - min(cps)
-    if len(cjk_chars) >= 3 and span < 0x1500:
-        return True
-    return False
+    return bool(len(cjk_chars) >= 3 and span < 5376)
 
 
 def fix_garbled_layer_name(name: str) -> str:
@@ -110,7 +110,6 @@ def fix_garbled_layer_name(name: str) -> str:
     return f"__garbled_{h}__"
 
 
-
 # 后端探测（启动时缓存一次）
 _BACKEND_CACHE: dict = {}
 
@@ -119,6 +118,7 @@ def _has_ezdxf() -> bool:
     if "ezdxf" not in _BACKEND_CACHE:
         try:
             import importlib.util
+
             _BACKEND_CACHE["ezdxf"] = importlib.util.find_spec("ezdxf") is not None
         except (ImportError, AttributeError):
             _BACKEND_CACHE["ezdxf"] = False
@@ -129,6 +129,7 @@ def _has_ezdwg() -> bool:
     if "ezdwg" not in _BACKEND_CACHE:
         try:
             import importlib.util
+
             _BACKEND_CACHE["ezdwg"] = importlib.util.find_spec("ezdwg") is not None
         except (ImportError, AttributeError):
             _BACKEND_CACHE["ezdwg"] = False
@@ -153,6 +154,7 @@ class _DxfProxy:
 
     包装后：parser.py 可以无差别用 entity.dxf.start / .get('start') / .hasattr('start')
     """
+
     __slots__ = ("_raw", "_backend")
 
     def __init__(self, raw_dxf, backend: str):
@@ -161,8 +163,8 @@ class _DxfProxy:
         object.__setattr__(self, "_backend", backend)
 
     def __getattr__(self, name):
-        backend = object.__getattribute__(self, '_backend')
-        raw = object.__getattribute__(self, '_raw')
+        backend = object.__getattribute__(self, "_backend")
+        raw = object.__getattribute__(self, "_raw")
         if backend == "ezdxf":
             return getattr(raw, name)
         # ezdwg: dict 风格
@@ -174,36 +176,36 @@ class _DxfProxy:
             return None
 
     def __getitem__(self, key):
-        backend = object.__getattribute__(self, '_backend')
-        raw = object.__getattribute__(self, '_raw')
+        backend = object.__getattribute__(self, "_backend")
+        raw = object.__getattribute__(self, "_raw")
         if backend == "ezdxf":
             return raw[key]
         return raw.get(key)
 
     def get(self, key, default=None):
-        backend = object.__getattribute__(self, '_backend')
-        raw = object.__getattribute__(self, '_raw')
+        backend = object.__getattribute__(self, "_backend")
+        raw = object.__getattribute__(self, "_raw")
         if backend == "ezdxf":
             return getattr(raw, key, default)
         return raw.get(key, default)
 
     def hasattr(self, key) -> bool:
-        backend = object.__getattribute__(self, '_backend')
-        raw = object.__getattribute__(self, '_raw')
+        backend = object.__getattribute__(self, "_backend")
+        raw = object.__getattribute__(self, "_raw")
         if backend == "ezdxf":
             return raw.hasattr(key)
         return key in raw
 
     def __contains__(self, key) -> bool:
-        backend = object.__getattribute__(self, '_backend')
-        raw = object.__getattribute__(self, '_raw')
+        backend = object.__getattribute__(self, "_backend")
+        raw = object.__getattribute__(self, "_raw")
         if backend == "ezdxf":
             return raw.hasattr(key)
         return key in raw
 
     def __iter__(self):
-        backend = object.__getattribute__(self, '_backend')
-        raw = object.__getattribute__(self, '_raw')
+        backend = object.__getattribute__(self, "_backend")
+        raw = object.__getattribute__(self, "_raw")
         if backend == "ezdxf":
             return iter(raw)
         return iter(raw.keys())
@@ -402,8 +404,7 @@ class _MspWrapper:
                 yield _EntityWrapper(e, "ezdxf", self._doc)
         else:  # ezdwg
             for e in self._raw.query(
-                "LINE LWPOLYLINE POLYLINE ARC CIRCLE ELLIPSE POINT "
-                "TEXT MTEXT DIMENSION INSERT MINSERT HATCH SPLINE"
+                "LINE LWPOLYLINE POLYLINE ARC CIRCLE ELLIPSE POINT TEXT MTEXT DIMENSION INSERT MINSERT HATCH SPLINE"
             ):
                 yield _EntityWrapper(e, "ezdwg", self._doc, self._layer_cache)
 
@@ -495,6 +496,7 @@ def read_cad(path: str | Path) -> _DocWrapper:
             raise RuntimeError("ezdxf 未安装，无法读取 DXF")
         try:
             import ezdxf
+
             doc = ezdxf.readfile(str(p))
             return _DocWrapper(doc, "ezdxf", str(p))
         except Exception as e:
@@ -503,16 +505,16 @@ def read_cad(path: str | Path) -> _DocWrapper:
     elif suffix == ".dwg":
         if not _has_ezdwg():
             raise RuntimeError(
-                "ezdwg 未安装，无法读取 DWG。\n"
-                "解决：pip install ezdwg\n"
-                "或安装 ODA File Converter 后用 DXF 格式保存"
+                "ezdwg 未安装，无法读取 DWG。\n解决：pip install ezdwg\n或安装 ODA File Converter 后用 DXF 格式保存"
             )
         try:
             import ezdwg
+
             doc = ezdwg.read(str(p))
             return _DocWrapper(doc, "ezdwg", str(p))
         except Exception as e:
             import logging
+
             logging.exception("ezdwg 解析 DWG 失败: %s", p)
             raise RuntimeError(f"ezdwg 解析 DWG 失败: {e}") from e
 
@@ -546,25 +548,27 @@ def read_cad_smart(path: str | Path) -> _DocWrapper:
             except Exception as e:
                 # 失败时尝试 fallback
                 import logging
+
                 logging.warning(f"ezdwg 解析失败，尝试 ODA fallback: {e}")
 
         # 路径 2: ODA → DXF
         try:
-            from .dwg import convert_dwg_to_dxf
             import tempfile
+
+            from .dwg import convert_dwg_to_dxf
+
             tmp_dir = tempfile.mkdtemp(prefix="cadboq_")
             dxf_path = convert_dwg_to_dxf(str(p), tmp_dir)
             if dxf_path:
                 return read_cad(dxf_path)
         except Exception as e:
             import logging
+
             logging.warning(f"ODA fallback 失败: {e}")
 
         # 全部失败
         raise RuntimeError(
-            f"DWG 解析失败: {p}\n"
-            f"已尝试 ezdwg + ODA，均失败。\n"
-            f"建议：在 AutoCAD 中另存为 DXF 格式后再打开。"
+            f"DWG 解析失败: {p}\n已尝试 ezdwg + ODA，均失败。\n建议：在 AutoCAD 中另存为 DXF 格式后再打开。"
         )
 
     raise UnsupportedFormat(f"不支持的文件格式: {suffix}")
@@ -592,8 +596,9 @@ def probe_dwg_support(path: str) -> str | None:
         return "ezdwg 未安装，无法读取 DWG"
     try:
         import ezdwg
+
         doc = ezdwg.read(str(path))
-        doc.graph()          # 触发图层表 section 解码（失败即不支持该文件编码）
+        doc.graph()  # 触发图层表 section 解码（失败即不支持该文件编码）
         return None
     except Exception as e:
         return str(e)

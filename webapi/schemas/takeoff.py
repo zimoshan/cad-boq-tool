@@ -1,4 +1,5 @@
 """takeoff 域 schema"""
+
 from __future__ import annotations
 
 from typing import Any

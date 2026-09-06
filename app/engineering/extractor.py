@@ -5,12 +5,12 @@ V2 第二版（任务二十八）：按"项目级 layer_rules"白名单驱动分
 - 用户在「项目设置」里把图层归到 4 个桶（设备/导线/面积/跳过）
 - 未归类的图层（无规则 + 不在背景黑名单）默认按"设备"处理（兼容旧项目）
 """
+
 from __future__ import annotations
 
 from .. import db
 from ..takeoff.aggregate import extract_typical_sizes
-from .classifier import (infer_object_meta, LINEAR_TYPES, AREA_TYPES,
-                          _is_building_bg_layer)
+from .classifier import AREA_TYPES, LINEAR_TYPES, _is_building_bg_layer, infer_object_meta
 from .object_model import make_engineering_object
 from .specification import infer_spec_from_block
 
@@ -27,8 +27,7 @@ _ALL_CATS = (CAT_EQUIPMENT, CAT_LINEAR, CAT_AREA, CAT_SKIP)
 
 def _legend_confirmed(project_id: int) -> dict:
     """{block_name: legend_row} 已确认图例（提升置信度/规格）"""
-    return {k: v for k, v in db.get_block_legend_map(project_id).items()
-            if v.get("confirmed")}
+    return {k: v for k, v in db.get_block_legend_map(project_id).items() if v.get("confirmed")}
 
 
 def _attribs_from_entities(ents: list) -> dict:
@@ -37,6 +36,7 @@ def _attribs_from_entities(ents: list) -> dict:
     取第一个含 attribs 的实体，返回 {tag: value}；无则 {}。
     """
     import json
+
     for e in ents:
         if not e.geom_json:
             continue
@@ -57,8 +57,7 @@ def _spec_from_attribs(attribs: dict) -> str:
     """
     if not attribs:
         return ""
-    preferred = ("MODEL", "TYPE", "SPEC", "SIZE", "DN", "POWER", "WATT",
-                 "型号", "规格", "口径", "功率")
+    preferred = ("MODEL", "TYPE", "SPEC", "SIZE", "DN", "POWER", "WATT", "型号", "规格", "口径", "功率")
     vals = []
     for tag, val in attribs.items():
         t = str(tag).upper()
@@ -116,8 +115,7 @@ def _resolve_layer_category(layer_name: str, project_layer_rules: dict) -> str |
     return None  # 未分类：交给调用方按"无规则默认设备"逻辑
 
 
-def _apply_knowledge_base(project_id: int, meta: dict, block_name: str = "",
-                          layer_name: str = "") -> dict:
+def _apply_knowledge_base(project_id: int, meta: dict, block_name: str = "", layer_name: str = "") -> dict:
     """知识库层：用 symbol_library 覆盖规则推断的语义（三重兜底第 2 层）。
 
     命中知识库 → 覆盖 discipline/system/spec/quantity_rule，并提升置信度。
@@ -142,8 +140,7 @@ def _apply_knowledge_base(project_id: int, meta: dict, block_name: str = "",
     return meta
 
 
-def extract_and_store_engineering_objects(project_id: int, sheet_id: int,
-                                          layer_rules: dict = None) -> dict:
+def extract_and_store_engineering_objects(project_id: int, sheet_id: int, layer_rules: dict = None) -> dict:
     """从一张图纸的 entity 提取三类工程对象并落库（幂等：先清旧）。
 
     Args:
@@ -160,15 +157,20 @@ def extract_and_store_engineering_objects(project_id: int, sheet_id: int,
 
     has_project_rules = any(layer_rules.get(c) for c in _ALL_CATS)
 
-    db.delete_eo_for_sheet(sheet_id)   # 幂等重建
+    db.delete_eo_for_sheet(sheet_id)  # 幂等重建
     confirmed_legend = _legend_confirmed(project_id)
     created: list[int] = []
-    stats = {"equipment": 0, "linear": 0, "area": 0,
-             "skipped_anonymous_blocks": 0, "skipped_building_bg": 0,
-             "skipped_unclassified": 0}
+    stats = {
+        "equipment": 0,
+        "linear": 0,
+        "area": 0,
+        "skipped_anonymous_blocks": 0,
+        "skipped_building_bg": 0,
+        "skipped_unclassified": 0,
+    }
 
     # ===== 设备类：INSERT 块 =====
-    for bname, cnt in db.distinct_blocks(sheet_id):
+    for bname, _cnt in db.distinct_blocks(sheet_id):
         if not bname or bname.startswith("*"):
             stats["skipped_anonymous_blocks"] += 1
             continue
@@ -199,30 +201,49 @@ def extract_and_store_engineering_objects(project_id: int, sheet_id: int,
         legend = confirmed_legend.get(bname)
         if legend:
             spec = legend.get("spec") or spec
-            conf = 0.95                       # 人工确认 → 高置信
+            conf = 0.95  # 人工确认 → 高置信
         elif meta.get("from_knowledge_base"):
-            conf = 0.9                        # 知识库命中 → 高置信
+            conf = 0.9  # 知识库命中 → 高置信
         else:
             # 块属性（ATTRIB）优先于块名正则：型号/规格/材质直接入库
             attribs = _attribs_from_entities(ents)
             attr_spec = _spec_from_attribs(attribs)
             if attr_spec:
                 spec = attr_spec
-                conf = max(conf, 0.85)        # 有块属性 → 置信度提升
+                conf = max(conf, 0.85)  # 有块属性 → 置信度提升
         qty_rule = meta.get("quantity_rule") or "count"
         eo = make_engineering_object(
-            project_id, sheet_id, object_type="equipment",
-            discipline=meta["discipline"], system=meta["system"],
-            block_name=bname, layer_name=layer, specification=spec,
-            unit="个", quantity_rule=qty_rule, confidence=conf,
-            source="rule", entity_ids=[e.id for e in ents][:MAX_TRACE_IDS])
-        created.append(db.create_engineering_object(
-            project_id, sheet_id, object_type=eo.object_type,
-            discipline=eo.discipline, system=eo.system,
-            block_name=eo.block_name, layer_name=eo.layer_name,
-            specification=eo.specification, unit=eo.unit,
-            quantity_rule=eo.quantity_rule, confidence=eo.confidence,
-            source=eo.source, entity_ids=eo.entity_ids))
+            project_id,
+            sheet_id,
+            object_type="equipment",
+            discipline=meta["discipline"],
+            system=meta["system"],
+            block_name=bname,
+            layer_name=layer,
+            specification=spec,
+            unit="个",
+            quantity_rule=qty_rule,
+            confidence=conf,
+            source="rule",
+            entity_ids=[e.id for e in ents][:MAX_TRACE_IDS],
+        )
+        created.append(
+            db.create_engineering_object(
+                project_id,
+                sheet_id,
+                object_type=eo.object_type,
+                discipline=eo.discipline,
+                system=eo.system,
+                block_name=eo.block_name,
+                layer_name=eo.layer_name,
+                specification=eo.specification,
+                unit=eo.unit,
+                quantity_rule=eo.quantity_rule,
+                confidence=eo.confidence,
+                source=eo.source,
+                entity_ids=eo.entity_ids,
+            )
+        )
         stats["equipment"] += 1
 
     # ===== 线性 / 面积类：图层聚合 =====
@@ -236,15 +257,13 @@ def extract_and_store_engineering_objects(project_id: int, sheet_id: int,
                 continue
             else:
                 cat = CAT_LINEAR  # 旧行为默认
-        if cat == CAT_SKIP or cat == CAT_EQUIPMENT:
+        if cat in (CAT_SKIP, CAT_EQUIPMENT):
             if cat == CAT_SKIP:
                 stats["skipped_building_bg"] += 1
             continue
         ents = db.get_entities(sheet_id, layer=lname)
         lin = [e for e in ents if e.dxf_type in LINEAR_TYPES and (e.length or 0) > 0]
-        area = [e for e in ents
-                if (e.dxf_type in AREA_TYPES or e.dxf_type == "LWPOLYLINE")
-                and (e.area or 0) > 0]
+        area = [e for e in ents if (e.dxf_type in AREA_TYPES or e.dxf_type == "LWPOLYLINE") and (e.area or 0) > 0]
         meta = infer_object_meta(layer_name=lname)
         # 知识库层（三重兜底第 2 层）：人工标定优先于规则
         meta = _apply_knowledge_base(project_id, meta, layer_name=lname)
@@ -253,39 +272,75 @@ def extract_and_store_engineering_objects(project_id: int, sheet_id: int,
         spec = meta.get("spec") or (specs[0] if specs else "")
         # 计量规则从几何推断（而非仅按类型桶）：闭合多段线→area、线→length
         rule = meta.get("quantity_rule") or _infer_rule_from_geometry(ents, fallback="length")
-        lin_conf = 0.7 if meta["confidence"] > 0 else 0.4   # 低置信留给 LLM 第3层补充
+        lin_conf = 0.7 if meta["confidence"] > 0 else 0.4  # 低置信留给 LLM 第3层补充
         if cat == CAT_LINEAR and lin:
             obj_type = "area" if rule == "area" else "linear"
             unit = "m²" if rule == "area" else "m"
             eo = make_engineering_object(
-                project_id, sheet_id, object_type=obj_type,
-                discipline=meta["discipline"], system=meta["system"],
-                layer_name=lname, specification=spec, unit=unit,
-                quantity_rule=rule, confidence=lin_conf, source="rule",
-                entity_ids=[e.id for e in (area if rule == "area" else lin)][:MAX_TRACE_IDS])
-            created.append(db.create_engineering_object(
-                project_id, sheet_id, object_type=eo.object_type,
-                discipline=eo.discipline, system=eo.system,
-                layer_name=eo.layer_name, specification=spec, unit=unit,
-                quantity_rule=eo.quantity_rule, confidence=eo.confidence,
-                source=eo.source, entity_ids=eo.entity_ids))
+                project_id,
+                sheet_id,
+                object_type=obj_type,
+                discipline=meta["discipline"],
+                system=meta["system"],
+                layer_name=lname,
+                specification=spec,
+                unit=unit,
+                quantity_rule=rule,
+                confidence=lin_conf,
+                source="rule",
+                entity_ids=[e.id for e in (area if rule == "area" else lin)][:MAX_TRACE_IDS],
+            )
+            created.append(
+                db.create_engineering_object(
+                    project_id,
+                    sheet_id,
+                    object_type=eo.object_type,
+                    discipline=eo.discipline,
+                    system=eo.system,
+                    layer_name=eo.layer_name,
+                    specification=spec,
+                    unit=unit,
+                    quantity_rule=eo.quantity_rule,
+                    confidence=eo.confidence,
+                    source=eo.source,
+                    entity_ids=eo.entity_ids,
+                )
+            )
             stats["area" if rule == "area" else "linear"] += 1
         if cat == CAT_AREA and area:
             obj_type = "linear" if rule == "length" else "area"
             unit = "m" if rule == "length" else "m²"
             rule = rule if rule in ("length", "area") else "area"
             eo = make_engineering_object(
-                project_id, sheet_id, object_type=obj_type,
-                discipline=meta["discipline"], system=meta["system"],
-                layer_name=lname, specification=spec, unit=unit,
-                quantity_rule=rule, confidence=lin_conf, source="rule",
-                entity_ids=[e.id for e in (lin if rule == "length" else area)][:MAX_TRACE_IDS])
-            created.append(db.create_engineering_object(
-                project_id, sheet_id, object_type=eo.object_type,
-                discipline=eo.discipline, system=eo.system,
-                layer_name=eo.layer_name, specification=spec, unit=unit,
-                quantity_rule=eo.quantity_rule, confidence=eo.confidence,
-                source=eo.source, entity_ids=eo.entity_ids))
+                project_id,
+                sheet_id,
+                object_type=obj_type,
+                discipline=meta["discipline"],
+                system=meta["system"],
+                layer_name=lname,
+                specification=spec,
+                unit=unit,
+                quantity_rule=rule,
+                confidence=lin_conf,
+                source="rule",
+                entity_ids=[e.id for e in (lin if rule == "length" else area)][:MAX_TRACE_IDS],
+            )
+            created.append(
+                db.create_engineering_object(
+                    project_id,
+                    sheet_id,
+                    object_type=eo.object_type,
+                    discipline=eo.discipline,
+                    system=eo.system,
+                    layer_name=eo.layer_name,
+                    specification=spec,
+                    unit=unit,
+                    quantity_rule=eo.quantity_rule,
+                    confidence=eo.confidence,
+                    source=eo.source,
+                    entity_ids=eo.entity_ids,
+                )
+            )
             stats["linear" if rule == "length" else "area"] += 1
 
     return {"created": len(created), "stats": stats, "object_ids": created}

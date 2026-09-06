@@ -1,4 +1,5 @@
 """/api/audit 路由（Phase 2.2）"""
+
 # 不使用 from __future__ import annotations：Pydantic 2.8 + FastAPI 0.115 forward ref 解析问题
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession

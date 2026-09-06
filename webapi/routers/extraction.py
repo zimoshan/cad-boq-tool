@@ -1,4 +1,5 @@
 """/api/extraction 路由（Phase 2.2）"""
+
 # 不使用 from __future__ import annotations：Pydantic 2.8 + FastAPI 0.115 forward ref 解析问题
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,7 +30,5 @@ async def list_eos(
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     """列出工程对象（可按 sheet_id / object_type 过滤）"""
-    rows = await extraction_service.list_engineering_objects(
-        db, project_id, sheet_id, object_type, limit
-    )
+    rows = await extraction_service.list_engineering_objects(db, project_id, sheet_id, object_type, limit)
     return rows

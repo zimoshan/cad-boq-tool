@@ -1,4 +1,5 @@
 """映射服务：实体/图层/块 ↔ BOQ 条目"""
+
 from __future__ import annotations
 
 from . import db

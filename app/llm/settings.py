@@ -7,12 +7,12 @@
 - `resolve_runtime()` 一次性返回 (primary_backend, fallback_backend, llm_config, threshold)，
   给 runner.py 调用，减少重复读取。
 """
+
 from __future__ import annotations
 
 import time
-from typing import Optional, Tuple
 
-from .. import db, config
+from .. import config, db
 from ..takeoff.llm_backends import LLMConfig
 
 
@@ -86,17 +86,21 @@ def to_settings_dict(llmc: LLMConfig) -> dict:
     return {
         "active_backend": llmc.primary_backend,
         "ollama_host": llmc.ollama_host,
-        "ollama_model": llmc.primary_model if llmc.primary_backend == "ollama" else (
-            llmc.fallback_model if llmc.fallback_backend == "ollama" else ""),
+        "ollama_model": llmc.primary_model
+        if llmc.primary_backend == "ollama"
+        else (llmc.fallback_model if llmc.fallback_backend == "ollama" else ""),
         "dashscope_api_key": llmc.api_keys.get("dashscope", ""),
-        "dashscope_model": llmc.primary_model if llmc.primary_backend == "dashscope" else (
-            llmc.fallback_model if llmc.fallback_backend == "dashscope" else ""),
+        "dashscope_model": llmc.primary_model
+        if llmc.primary_backend == "dashscope"
+        else (llmc.fallback_model if llmc.fallback_backend == "dashscope" else ""),
         "openai_api_key": llmc.api_keys.get("openai", ""),
-        "openai_model": llmc.primary_model if llmc.primary_backend == "openai" else (
-            llmc.fallback_model if llmc.fallback_backend == "openai" else ""),
+        "openai_model": llmc.primary_model
+        if llmc.primary_backend == "openai"
+        else (llmc.fallback_model if llmc.fallback_backend == "openai" else ""),
         "deepseek_api_key": llmc.api_keys.get("deepseek", ""),
-        "deepseek_model": llmc.primary_model if llmc.primary_backend == "deepseek" else (
-            llmc.fallback_model if llmc.fallback_backend == "deepseek" else ""),
+        "deepseek_model": llmc.primary_model
+        if llmc.primary_backend == "deepseek"
+        else (llmc.fallback_model if llmc.fallback_backend == "deepseek" else ""),
         "custom_base_url": llmc.custom_endpoints.get("custom", {}).get("base_url", ""),
         "custom_api_key": llmc.custom_endpoints.get("custom", {}).get("api_key", ""),
         "custom_model": llmc.custom_endpoints.get("custom", {}).get("model", ""),
@@ -118,7 +122,9 @@ def probe_backend(name: str, llmc: LLMConfig, timeout: float = 5.0) -> dict:
     t0 = time.time()
     try:
         if name == "ollama":
-            import urllib.request, json
+            import json
+            import urllib.request
+
             host = llmc.ollama_host or "http://127.0.0.1:11434"
             req = urllib.request.urlopen(f"{host.rstrip('/')}/api/tags", timeout=timeout)
             data = json.loads(req.read().decode("utf-8", errors="replace"))
@@ -141,13 +147,12 @@ def probe_backend(name: str, llmc: LLMConfig, timeout: float = 5.0) -> dict:
         api_key = api_key_map.get(name, "") or (llmc.custom_endpoints.get("custom", {}) or {}).get("api_key", "")
         base_url = (base_url_map.get(name, "") or "").rstrip("/")
         if not api_key or not base_url:
-            return {"ok": False, "latency_ms": 0, "models_sample": [],
-                    "error": "API Key 或 base_url 未配置"}
+            return {"ok": False, "latency_ms": 0, "models_sample": [], "error": "API Key 或 base_url 未配置"}
         try:
-            import urllib.request, json
-            req = urllib.request.Request(
-                f"{base_url}/models",
-                headers={"Authorization": f"Bearer {api_key}"})
+            import json
+            import urllib.request
+
+            req = urllib.request.Request(f"{base_url}/models", headers={"Authorization": f"Bearer {api_key}"})
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 data = json.loads(r.read().decode("utf-8", errors="replace"))
             models = [m.get("id", m.get("name", "")) for m in data.get("data", [])][:5]
@@ -157,20 +162,19 @@ def probe_backend(name: str, llmc: LLMConfig, timeout: float = 5.0) -> dict:
             # OpenAI SDK 兜底
             try:
                 from openai import OpenAI
+
                 client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
                 models_resp = client.models.list()
                 models = [m.id for m in models_resp.data][:5]
                 latency = int((time.time() - t0) * 1000)
                 return {"ok": True, "latency_ms": latency, "models_sample": models, "error": ""}
             except Exception as e2:  # noqa: BLE001
-                return {"ok": False, "latency_ms": 0, "models_sample": [],
-                        "error": f"{e} / {e2}"}
+                return {"ok": False, "latency_ms": 0, "models_sample": [], "error": f"{e} / {e2}"}
     except Exception as e:  # noqa: BLE001
-        return {"ok": False, "latency_ms": 0, "models_sample": [],
-                "error": str(e)}
+        return {"ok": False, "latency_ms": 0, "models_sample": [], "error": str(e)}
 
 
-def resolve_runtime() -> Tuple[LLMConfig, Optional[str], float]:
+def resolve_runtime() -> tuple[LLMConfig, str | None, float]:
     """一次性返回 (LLMConfig, fallback_backend, quality_threshold)。runner.py 使用。
 
     注意：fallback_backend 只在 auto_fallback=True 且 fallback 非空时返回；否则为 None。
