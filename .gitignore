@@ -33,6 +33,10 @@ migrations/initdb.d/__pycache__/
 webui/node_modules/
 webui/dist/
 webui/.vite/
+
+# Casbin 自动生成空策略/模型文件（运行时按需创建，不入仓）
+webapi/auth/casbin_model.conf
+webapi/auth/casbin_policy.csv
 # 未来 webapi/ 运行时产物
 webapi/__pycache__/
 # 临时测试输出
