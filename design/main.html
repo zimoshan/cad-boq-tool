@@ -5,8 +5,15 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
 <title>图纸算量 CAD·BOQ</title>
+<!-- P0-19 CDN 本地化（#11，2026-09-06）：原 modao.cc CDN 引用注释保留，Phase 1 期间下载到 webui/public/cdn/，改为引用本地资源 -->
+<!-- 原 CDN：
 <script src="https://modao.cc/agent-py/static/source/js/tailwindcss.js"></script>
 <script src="https://modao.cc/agent-py/static/source/js/iconify-icon.min.js"></script>
+本地化步骤见 webui/README.md "P0-19 CDN 本地化" 段落。设计稿作为 React 组件 1:1 蓝本（已转 webui/src/App.tsx 占位骨架）。-->
+<!-- 本地引用（待 Phase 1 实施）：
+<script src="/cdn/tailwindcss.js"></script>
+<script src="/cdn/iconify-icon.min.js"></script>
+-->
 </head>
 <body class="m-0 h-screen min-w-[1120px] overflow-hidden bg-slate-100 font-sans text-slate-700">
 <main class="flex h-full flex-col bg-slate-100">

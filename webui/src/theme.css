@@ -1,0 +1,33 @@
+/* 主题样式（Tailwind 基础 + 自定义）
+   P0-19：CDN 资源待本地化（webui/public/cdn/tailwind.min.css）
+   Phase 0 阶段：内联基础样式，Phase 1+ 切 Tailwind JIT */
+
+:root {
+  --bg-primary: #0f172a;
+  --bg-panel: #1e293b;
+  --bg-card: #334155;
+  --bg-border: #475569;
+  --text-primary: #f1f5f9;
+  --text-secondary: #cbd5e1;
+  --text-muted: #94a3b8;
+  --accent-primary: #3b82f6;
+  --accent-success: #10b981;
+  --accent-warning: #f59e0b;
+  --accent-danger: #ef4444;
+  --topbar-height: 52px;
+  --rail-width: 52px;
+  --statusbar-height: 28px;
+}
+
+* { box-sizing: border-box; }
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+button { font-family: inherit; cursor: pointer; }
