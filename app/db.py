@@ -799,20 +799,74 @@ def get_block_insert_layers(sheet_id: int) -> dict:
 
 
 # ---------- 实体 ----------
+def _bbox_to_wkt(bbox) -> str | None:
+    """B4 修复（v2.0 §2.4，2026-09-06）：bbox tuple → WKT POLYGON for PostGIS geometry
+
+    bbox 形如 (min_x, min_y, max_x, max_y) 或 4-tuple
+    返回 POLYGON(...) WKT；任一为 None/0 时返回 None
+    """
+    if not bbox or len(bbox) < 4:
+        return None
+    try:
+        x1, y1, x2, y2 = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
+    except (ValueError, TypeError, IndexError):
+        return None
+    if x1 == 0 and y1 == 0 and x2 == 0 and y2 == 0:
+        return None
+    return f"POLYGON(({x1} {y1},{x2} {y1},{x2} {y2},{x1} {y2},{x1} {y1}))"
+
+
+def _bbox_split(bbox) -> tuple[float | None, float | None, float | None, float | None]:
+    """B4 修复：bbox tuple → (min_x, min_y, max_x, max_y)"""
+    if not bbox or len(bbox) < 4:
+        return None, None, None, None
+    try:
+        return (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
+    except (ValueError, TypeError, IndexError):
+        return None, None, None, None
+
+
 def replace_entities(sheet_id: int, entities: list) -> None:
-    """整张图纸重灌实体（先清后插）"""
+    """整张图纸重灌实体（先清后插）
+
+    B4 修复（v2.0 §2.4，2026-09-06）：
+    - bbox 拆 4 列：min_x/min_y/max_x/max_y
+    - WKT POLYGON：geometry 列（PostGIS GIST 索引，/api/cad/viewport 用）
+    - 兼容 SQLite（无 PostGIS）：geometry 存 WKT 字符串，由读侧决定如何使用
+    """
     with get_conn() as conn:
         conn.execute("DELETE FROM entity WHERE sheet_id=?", (sheet_id,))
         rows = []
         for e in entities:
+            min_x, min_y, max_x, max_y = _bbox_split(e.bbox)
+            wkt = _bbox_to_wkt(e.bbox)
+            # SQLite 模式：geometry 列存 WKT 字符串；PG 模式：可被 ST_GeomFromText 解析
             rows.append((
                 sheet_id, e.handle, e.dxf_type, e.layer, e.block_name,
-                json.dumps(e.bbox), e.geom_json, e.length, e.area,
+                min_x, min_y, max_x, max_y,  # B4 新增 4 列
+                wkt,                            # B4 新增 geometry (WKT)
+                e.geom_json, e.length, e.area,
                 json.dumps(list(e.color)),
             ))
-        conn.executemany(
-            "INSERT INTO entity(sheet_id, handle, dxf_type, layer, block_name, bbox, geom_json, length, area, color) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?)", rows)
+        try:
+            conn.executemany(
+                "INSERT INTO entity(sheet_id, handle, dxf_type, layer, block_name, "
+                "min_x, min_y, max_x, max_y, geometry, "
+                "geom_json, length, area, color) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+        except Exception:
+            # 兼容旧 SQLite schema（无 min_x..max_y/geometry 列）→ 回退原 10 列 INSERT
+            conn.executemany("DELETE FROM entity WHERE sheet_id=?", (sheet_id,))
+            legacy_rows = []
+            for e in entities:
+                legacy_rows.append((
+                    sheet_id, e.handle, e.dxf_type, e.layer, e.block_name,
+                    json.dumps(e.bbox), e.geom_json, e.length, e.area,
+                    json.dumps(list(e.color)),
+                ))
+            conn.executemany(
+                "INSERT INTO entity(sheet_id, handle, dxf_type, layer, block_name, bbox, geom_json, length, area, color) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?)", legacy_rows)
 
 
 def get_entities(sheet_id: int, layer: str = None, block: str = None, limit: int = 200000) -> list:
