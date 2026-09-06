@@ -60,12 +60,13 @@
 
 #### A.0 · Phase 0 · 清理与归档（先做，1 周）
 - [x] **P0-0.1 git tag `pre-webify` 完整快照** ✅ 2026-09-06（HEAD = 837441f；`git reset --hard pre-webify` 随时回退）
-- [ ] **P0-0.2 删除 Node 壳** [src/](src/) + [bin/](bin/) + [package.json](package.json)（5 文件，#10 已明确引用）⬜
-- [ ] **P0-0.3 删除桌面端入口** [main.py](main.py) + 整个 [app/ui/](app/ui/) 21 文件（#15）⬜
-- [ ] **P0-0.4 移动 UI 相关归档** 到 [docs/_removed/](docs/_removed/)：UI_ARCHITECTURE / UI_AUDIT / UI_REDESIGN / UI_REFACTOR_REPORT / COMPLETION_CHECKLIST / UI_UX_OPTIMIZATION_DELIVERY / UI_AUDIT_REPORT_2026-08-28 / BINDING_LEGEND_RECTIFICATION_2026-08-28 / PROJECT_MANAGEMENT_OPTIMIZATION 共 9 文件 ⬜
-- [ ] **P0-0.5 移动旧 GUI 截图** 到 [artifacts/_legacy_ui/](artifacts/)：3 张 verify_round3_*.png + [ui_audit.md](ui_audit.md) ⬜
-- [ ] **P0-0.6 备份垃圾清理 ~4.7 GB**（`~/.cad-boq-tool/` 下多个 .bak_2026* / .bak-prellm / .fresh / .rebuilt）⬜
-- [ ] **P0-0.7 README 重写**（指向 webapi/webui 启动步骤）⬜
+- [x] **P0-0.2 删除 Node 壳** [src/](src/) + [bin/](bin/) + [package.json](package.json)（5 文件，#10 已明确引用）✅ 2026-09-06（commit `8c250ed`）
+- [x] **P0-0.3 删除桌面端入口** [main.py](main.py) + 整个 [app/ui/](app/ui/) 21 文件（#15）✅ 2026-09-06（commit `5056d21`）
+- [x] **P0-0.4 移动 UI 相关归档** 到 [docs/_removed/](docs/_removed/)：5 个 archive + 2 个 ui_audit = 7 文件（实际跟踪的，#10 已审）✅ 2026-09-06（commit `52c2df1`；含 .gitignore 解除 docs/ ignore）
+- [x] **P0-0.5 移动旧 GUI 截图** 到 [artifacts/_legacy_ui/](artifacts/)：3 张 verify_round3_*.png + [ui_audit.md](ui_audit.md) 共 4 文件（#15）✅ 2026-09-06（commit `a21ecb6`）
+- [x] **P0-0.6 备份垃圾清理**（`~/.cad-boq-tool/` 7 个 .bak_2026* / .bak-prellm / .fresh / .rebuilt 备份，#13）✅ 2026-09-06（实际释放 5.2 GB：8.2GB → 3.0GB）
+- [x] **P0-0.7 README 重写**（指向 webapi/webui 启动步骤，#12）✅ 2026-09-06（commit `db21d6a`）
+- [x] **P0-29 补 add 因 .gitignore 解除而出现的 14 个 docs/ 文档**（P0-0.4 副作用：根 .gitignore 解除 docs/ ignore 后，CAD_BOQ_Web化_*/REVIEW_*/CANDIDATE_*/驱动 Prompt/估算系统/未跟踪 archive 文档首次进入版本控制）✅ 2026-09-06（commit `acb0e28`）
 
 #### A.1 · Phase 0 · 基础设施（2 周）
 - [ ] **P0-1 requirements.txt 锁定**（PySide6 移除；增 FastAPI/uvicorn/SQLAlchemy[asyncio]/asyncpg/alembic/shapely/pydantic/Casbin/pytest-playwright）⬜
@@ -113,7 +114,7 @@
 - [ ] **Phase 5 · AI**（Candidate Union/Embedding/审核/正负样本/置信度校准）⬜
 - [ ] **Phase 6 · 工程化**（版本冲突/跨专业索引/组级降级/StandardProfile/CI/CD）⬜
 
-**Phase 0 出口标准**：① git tag pre-webify ✅ ② 桌面端启动入口 0 个 ③ Node 壳 0 个 ④ PG + PostGIS + 6 段能力 schema 完整 ⑤ FastAPI 起服务 + pytest 全绿 ⑥ 前端 Vite dev 起 + Chrome 渲染同 design/main.html ⑦ 测试数据通路占位完成 ⑧ 备份垃圾 0 ⑨ README 反映新架构。
+**Phase 0 出口标准**（9 条）：① git tag pre-webify ✅ ② 桌面端启动入口 0 个 ✅ ③ Node 壳 0 个 ✅ ④ PG + PostGIS + 6 段能力 schema 完整 ⬜ ⑤ FastAPI 起服务 + pytest 全绿 ⬜ ⑥ 前端 Vite dev 起 + Chrome 渲染同 design/main.html ⬜ ⑦ 测试数据通路占位完成 ⬜ ⑧ 备份垃圾 0 ✅ ⑨ README 反映新架构 ✅。**当前完成 5/9**（清理类全部完成，工程类待启动）。
 
 ---
 
