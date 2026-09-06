@@ -33,3 +33,13 @@ async def get_overview(
     """项目总览（boq_count / eo_breakdown / writeback_by_takability / llm_runs_by_task）"""
     data = await audit_service.get_overview(db, project_id)
     return OverviewResponse(**data)
+
+
+@router.get("/precheck")
+@requires("audit:read")
+async def get_precheck(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """v1.0 §29 预检页面 6 维度（drawing_type / takability / coverage / granularity / version / provisional）"""
+    return await audit_service.get_precheck(db, project_id)
