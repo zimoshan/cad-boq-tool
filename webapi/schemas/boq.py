@@ -29,6 +29,21 @@ class WritebackResponse(BaseModel):
     failed: int = 0
 
 
+class ExportBoqRequest(BaseModel):
+    """v1.0 §15 工程量回写：导出实测值到 Excel"""
+    project_id: int
+    output_path: str = Field(..., description="输出 xlsx 绝对路径")
+    overwrite_original: bool = Field(default=False, description="是否覆盖原 BOQ 数量列（默认保留对照）")
+
+
+class ExportBoqResponse(BaseModel):
+    project_id: int
+    output_path: str
+    written_rows: int
+    skipped_rows: int = 0
+    by_takability: dict = Field(default_factory=dict)
+
+
 class BoqItemRead(BaseModel):
     """B2 扩展后 BoqItem"""
     model_config = ConfigDict(from_attributes=True)

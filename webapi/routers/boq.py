@@ -1,4 +1,4 @@
-"""/api/boq 路由（Excel 解析 + 回写）"""
+"""/api/boq 路由（Excel 解析 + 回写 + 导出）"""
 # Pydantic 2.8 + FastAPI 0.115 解析 type hints 时 namespace 不含 forward ref 名称，
 # 即时求值 annotation 避免 _PydanticUndefinedAnnotation。
 from fastapi import APIRouter, Depends
@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from webapi.auth.decorators import requires
 from webapi.db import get_db
 from webapi.schemas.boq import (
+    ExportBoqRequest,
+    ExportBoqResponse,
     ParseBoqRequest,
     ParseBoqResponse,
     WritebackRequest,
@@ -31,3 +33,13 @@ async def writeback(req: WritebackRequest, db: AsyncSession = Depends(get_db)) -
     """回写 measured_qty（B5 S7 Excel 保真回写，P0-15 落实）"""
     result = await boq_service.writeback_quantities(db, req.project_id, req.project_scale)
     return WritebackResponse(**result)
+
+
+@router.post("/export", response_model=ExportBoqResponse)
+@requires("boq:export")
+async def export_boq(req: ExportBoqRequest, db: AsyncSession = Depends(get_db)) -> ExportBoqResponse:
+    """v1.0 §15 工程量回写：导出实测值到 Excel（overwrite_original=False 保留对照列）"""
+    result = await boq_service.export_boq_to_excel(
+        db, req.project_id, req.output_path, req.overwrite_original
+    )
+    return ExportBoqResponse(**result)

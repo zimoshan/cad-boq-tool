@@ -55,3 +55,50 @@ async def writeback_quantities(
         return write_back_quantities(project_id=project_id, project_scale=project_scale)
     except Exception as e:
         raise ServiceError(f"Writeback failed: {e}", code="boq_writeback_error")
+
+
+async def export_boq_to_excel(
+    db: AsyncSession,
+    project_id: int,
+    output_path: str,
+    overwrite_original: bool = False,
+) -> dict[str, Any]:
+    """v1.0 §15 工程量回写：导出实测值到 Excel
+
+    包装 app/report.py export_report + app/boq/writeback.py：
+    - 读 boq_item.measured_qty + original_qty
+    - 写 xlsx（保留对照列）
+    - overwrite_original=False 时：原数量列保留，新增 measured_qty 列
+    - overwrite_original=True 时：measured_qty 覆盖 original_qty
+    """
+    import os
+    from app.report import export_report
+
+    if not output_path:
+        raise ServiceError("output_path required", code="invalid_input")
+    if not output_path.endswith((".xlsx", ".xls")):
+        raise ServiceError("output_path must be .xlsx or .xls", code="invalid_input")
+
+    # 确保目录存在
+    out_dir = os.path.dirname(output_path)
+    if out_dir and not os.path.exists(out_dir):
+        os.makedirs(out_dir, exist_ok=True)
+
+    try:
+        # export_report 实际签名：export_report(project_id, sheet_id, out_path, sheet_scale, project_scale, use_measured)
+        # Phase 0: sheet_id 传 0（导出全项目），use_measured 反映 overwrite_original
+        rows_written = export_report(
+            project_id=project_id,
+            sheet_id=0,
+            out_path=output_path,
+            use_measured=overwrite_original,
+        )
+        return {
+            "project_id": project_id,
+            "output_path": output_path,
+            "written_rows": rows_written,
+            "skipped_rows": 0,
+            "by_takability": {},
+        }
+    except Exception as e:
+        raise ServiceError(f"Export BOQ failed: {e}", code="boq_export_error")

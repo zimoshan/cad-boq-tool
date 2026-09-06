@@ -171,6 +171,29 @@ def test_boq_writeback(mock_wb, client):
     assert r.json()["written"] == 100
 
 
+@patch("webapi.routers.boq.boq_service.export_boq_to_excel", new_callable=AsyncMock)
+def test_boq_export(mock_export, client):
+    """v1.0 §15 工程量回写：导出实测值到 Excel"""
+    mock_export.return_value = {
+        "project_id": 1, "output_path": "D:/out.xlsx",
+        "written_rows": 100, "skipped_rows": 0,
+        "by_takability": {"MEASURABLE": 80, "NO_DRAWING": 20},
+    }
+    r = client.post("/api/boq/export", json={"project_id": 1, "output_path": "D:/out.xlsx"})
+    assert r.status_code == 200
+    assert r.json()["written_rows"] == 100
+    assert r.json()["by_takability"]["MEASURABLE"] == 80
+
+
+@patch("webapi.routers.boq.boq_service.export_boq_to_excel", new_callable=AsyncMock)
+def test_boq_export_invalid_path(mock_export, client):
+    """output_path 必须 .xlsx/.xls"""
+    from webapi.services.base import ServiceError
+    mock_export.side_effect = ServiceError("must be .xlsx or .xls", code="invalid_input")
+    r = client.post("/api/boq/export", json={"project_id": 1, "output_path": "D:/out.txt"})
+    assert r.status_code == 400
+
+
 # ---------- /api/dataset ----------
 
 def test_dataset_list_empty(client):
