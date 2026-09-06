@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from webapi.config import get_settings
 from webapi.db import async_session_factory
 from webapi.auth.service import get_or_create_admin
-from webapi.routers import binding, boq, cad, dataset, health, jobs
+from webapi.routers import audit, binding, boq, cad, dataset, extraction, health, jobs, llm, takeoff
 
 settings = get_settings()
 
@@ -52,13 +52,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 路由注册（A.2 第 1 批：4 域 + health + Phase 2 jobs）
+# 路由注册（Phase 0 + Phase 2 全域：10 域）
 app.include_router(health.router)
 app.include_router(cad.router)
 app.include_router(binding.router)
 app.include_router(boq.router)
 app.include_router(dataset.router)
 app.include_router(jobs.router)
+# Phase 2.2 新增 4 域
+app.include_router(extraction.router)
+app.include_router(takeoff.router)
+app.include_router(llm.router)
+app.include_router(audit.router)
 
 
 # ---------- Phase 0 占位端点 ----------
