@@ -88,10 +88,10 @@
 - 代码层已就绪，验证留待 P0-23 pytest CI（Phase 0 出口标准 ⑤）
 
 #### A.2 · Phase 0 · 业务层重写（4 周，#2 B5 六段能力一次性补齐）
-- [ ] **P0-6 B1 BOQ 解析修复**（v2.0 §2.1：BOQ-001 4 种表头识别 + section/item/三数量列）⬜
-- [ ] **P0-7 B2 BoqItem 模型扩展**（v2.0 §2.2：section + bill_qty/installed_qty/qty_remaining + Item 主键）⬜
-- [ ] **P0-8 B3 块几何外置**（v2.0 §2.3：`sheet.blocks_json` 34MB → `block_geometry/<sha256>.parquet`）⬜
-- [ ] **P0-9 B4 空间列 + 视口查询**（v2.0 §2.4：`entity` 加 min_x/max_x/min_y/max_y + PostGIS geometry + `/api/cad/viewport?bbox=`）⬜
+- [x] **P0-6 B1 BOQ 解析修复**（v2.0 §2.1：BOQ-001 4 种表头识别 + section/item/三数量列）✅ 2026-09-06（commit `6f41f82`，HEADER_PROBE_ROWS=16 行探测覆盖电气/机械/建筑/结构 4 种）
+- [x] **P0-7 B2 BoqItem 模型扩展**（v2.0 §2.2：section + bill_qty/installed_qty/qty_remaining + Item 主键）✅ 2026-09-06（commit `6f41f82`，6 字段 + BOQ_HEADER_CANDIDATES 5 新表头 + _extract_item_key 多格式）
+- [x] **P0-8 B3 块几何外置**（v2.0 §2.3：`sheet.blocks_json` 34MB → `block_geometry/<sha256>.parquet`）✅ 2026-09-06（commit `ba1cb40`，app/cad/block_geometry_store.py + db.py update_sheet_blocks 智能路由 + 向后兼容）
+- [x] **P0-9 B4 空间列 + 视口查询**（v2.0 §2.4：`entity` 加 min_x/max_x/min_y/max_y + PostGIS geometry + `/api/cad/viewport?bbox=`）✅ 2026-09-06（commit `7b71bee`，db.py replace_entities 14 列 + 旧 schema 兼容回退 + webapi/services/cad.py query_viewport 已用 GIST 索引）
 - [ ] **P0-10 B5 S1 DWG 无头转换**（[dwg.py](app/cad/dwg.py) 加 accoreconsole 路径 + Linux ODA 二进制）⬜
 - [ ] **P0-11 B5 S3 单位标定**（drawing.units 字段 + INSUNITS 自动检测）⬜
 - [ ] **P0-12 B5 S4 归一化 + 黑名单**（型号词表 + DETAIL/LEGEND 层黑名单 v2.0 §5.1）⬜
