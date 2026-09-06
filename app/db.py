@@ -358,6 +358,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE sheet ADD COLUMN blocks_json TEXT DEFAULT ''")
     if "is_base" not in cols:
         conn.execute("ALTER TABLE sheet ADD COLUMN is_base INTEGER DEFAULT 0")
+    # v2.0 §2.2 B2：boq_item 缺 6 字段补
+    boq_cols = {r[1] for r in conn.execute("PRAGMA table_info(boq_item)").fetchall()}
+    for col, default in [("section", "''"), ("item_key", "''"), ("brand", "''"),
+                          ("bill_qty", "0"), ("installed_qty", "0"), ("qty_remaining", "0")]:
+        if col not in boq_cols:
+            conn.execute(f"ALTER TABLE boq_item ADD COLUMN {col} {('TEXT' if col in ('section','item_key','brand') else 'REAL')} DEFAULT {default}")
     # P4 v1.0 §2.5：补 writeback_audit 表（旧 SQLite schema 没包含）
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
     if "writeback_audit" not in tables:

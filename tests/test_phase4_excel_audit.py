@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import sqlite3
 import tempfile
 from pathlib import Path
 
@@ -14,25 +15,38 @@ from openpyxl import Workbook, load_workbook
 def fresh_db(tmp_path, monkeypatch):
     """测试用临时 SQLite DB（避免污染真实 ~/.cad-boq-tool/projects.db）
 
-    关键：app.db 通过 `from .config import DB_PATH` 静态导入，需要同时 patch
-    app.config.DB_PATH 和 app.db.DB_PATH 引用。
+    策略：直接用 sqlite3 临时 DB + 跑 _SCHEMA（不依赖 app.db 单例/thread_local）。
+    app.db 的所有 CRUD 函数都接受 conn 参数或通过 get_conn()，
+    我们在测试中直接 monkeypatch get_conn 返回临时 DB 的连接。
     """
-    from app import config as cfg_mod
     from app import db as app_db
+    from app import config as cfg_mod
 
     test_db_path = tmp_path / "test.db"
-    # 同时 patch 两个 module 的 DB_PATH 引用
+    # 创建临时 DB
+    test_conn = sqlite3.connect(str(test_db_path), check_same_thread=False)
+    test_conn.row_factory = sqlite3.Row
+    test_conn.executescript(app_db._SCHEMA)
+    # 跑 _migrate 创建 v2.0+ 表（writeback_audit 等）
+    app_db._migrate(test_conn)
+    test_conn.commit()
+
+    # monkeypatch get_conn 返回新连接到 test_db
+    def _mock_get_conn():
+        # 每次返回新连接（避免 thread_local 共享）
+        c = sqlite3.connect(str(test_db_path), check_same_thread=False)
+        c.row_factory = sqlite3.Row
+        return c
+
+    monkeypatch.setattr(app_db, "get_conn", _mock_get_conn)
     monkeypatch.setattr(cfg_mod, "DB_PATH", test_db_path)
-    monkeypatch.setattr(app_db, "DB_PATH", test_db_path)
-    # 重置 thread_local conn
-    if hasattr(app_db, "_thread_local"):
-        app_db._thread_local = app_db.threading.local()
-    # 重新初始化 schema
-    app_db.init_db()
-    yield app_db, tmp_path
     # 清理 thread_local
     if hasattr(app_db, "_thread_local"):
         app_db._thread_local = app_db.threading.local()
+
+    yield app_db, tmp_path
+
+    test_conn.close()
 
 
 # ============================================================
@@ -120,13 +134,14 @@ class TestExcelFaithfulWriteback:
 
         wb = load_workbook(str(out))
         ws = wb.active
-        assert ws.cell(row=2, column=1).value == 1  # row_index
-        assert ws.cell(row=2, column=2).value == "r1"  # code
-        # original_qty 列保留
+        # 表头：编号/描述/单位/图纸计量数量/原清单数量/差值/映射方式/比例因子 (8 列)
+        assert ws.cell(row=2, column=1).value == "r1"  # 编号
+        assert ws.cell(row=2, column=2).value == "Item 1"  # 描述
+        # 第 5 列 = 原清单数量（original_qty 保留 = 10）
         assert ws.cell(row=2, column=5).value == 10
 
     def test_export_overwrite_uses_measured_qty(self, tmp_path, fresh_db):
-        """use_measured=True：measured_qty 覆盖 original_qty 列"""
+        """use_measured=True：measured_qty 覆盖原清单数量"""
         from app.report import export_report
         app_db, db_dir = fresh_db
         xlsx = db_dir / "boq.xlsx"
@@ -152,8 +167,8 @@ class TestExcelFaithfulWriteback:
 
         wb = load_workbook(str(out))
         ws = wb.active
-        # overwrite 模式：第 5 列是 qty（= measured）
-        assert ws.cell(row=2, column=5).value == 99.0
+        # 第 4 列 = 图纸计量数量（= measured=99 覆盖原 orig=10）
+        assert ws.cell(row=2, column=4).value == 99.0
 
 
 # ============================================================
