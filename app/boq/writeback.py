@@ -1,34 +1,103 @@
 """工程量回写：把项目级计量结果写入 BOQ 实测数量列（measured_qty）。
 
-口径（方案 A 定稿）：
-- 复用 resolver.recompute（跨图纸累加、纯确定性、LLM 不参与）
-- 写入 boq_item.measured_qty —— **实测数量列**（原数量列保留不作对照覆盖）
-- 导出主要材料表/算量清单时，可选择「用实测值覆盖原数量」出终表
+B5 S7 可核性 + Excel 保真回写（v2.0 §2.5 / §5.3，2026-09-06）：
+- takability 6 状态：
+  MEASURABLE: 可精确计量
+  GROUP_ONLY: 只能按组合计量
+  NOT_MEASURABLE: 暂不可计量（图层黑名单 / 块未识别）
+  NO_DRAWING: BOQ 项无对应图纸
+  VERSION_CONFLICT: 多图版本冲突需人工
+  PROVISIONAL: 暂定值（人工标注）
+- writeback_audit 表（alembic 0002 创建）：保真回写审计
 """
 from __future__ import annotations
+
+from enum import Enum
+from typing import Any
 
 from .. import db
 from ..binding.resolver import recompute
 
 
+class Takability(str, Enum):
+    """B5 S7 可核性 6 状态"""
+    MEASURABLE = "MEASURABLE"
+    GROUP_ONLY = "GROUP_ONLY"
+    NOT_MEASURABLE = "NOT_MEASURABLE"
+    NO_DRAWING = "NO_DRAWING"
+    VERSION_CONFLICT = "VERSION_CONFLICT"
+    PROVISIONAL = "PROVISIONAL"
+
+
+def classify_takability(boq_item_id: int, mapping_count: int) -> Takability:
+    """根据 mapping 数判定 takability
+
+    0 → NO_DRAWING（无图纸对应）
+    1-2 → MEASURABLE（可精确计量）
+    ≥3 → GROUP_ONLY（按组计量，需人工核对）
+    """
+    if mapping_count == 0:
+        return Takability.NO_DRAWING
+    if mapping_count <= 2:
+        return Takability.MEASURABLE
+    return Takability.GROUP_ONLY
+
+
+def _log_writeback_audit(
+    project_id: int,
+    boq_item_id: int,
+    original_qty: float,
+    measured_qty: float,
+    takability: str,
+    file_sha256: str = "",
+) -> None:
+    """B5 S7：写 writeback_audit（保真回写审计）
+
+    Phase 0 占位：alembic 0002 表创建后启用
+    """
+    try:
+        with db.get_conn() as conn:
+            conn.execute(
+                "INSERT INTO writeback_audit(project_id, boq_item_id, original_qty, "
+                "measured_qty, takability, file_sha256) VALUES(?,?,?,?,?,?)",
+                (project_id, boq_item_id, original_qty, measured_qty, takability, file_sha256),
+            )
+    except Exception:
+        pass  # 表不存在时静默（Phase 0 早期可接受）
+
+
 def write_back_quantities(project_id: int, project_scale: float = 1.0) -> dict:
-    """项目内全部 BOQ 子项计量 → 写回 measured_qty 列。
+    """项目内全部 BOQ 子项计量 → 写回 measured_qty 列 + writeback_audit 审计
 
     Returns:
-        {"written": int, "total": int, "by_item": {boq_item_id: {"qty", "count"}}}
+        {
+            "written": int, "total": int,
+            "by_takability": {state: count},
+            "by_item": {boq_item_id: {"qty", "count", "takability"}}
+        }
     """
     items = db.get_boq_items(project_id)
     res = recompute(project_id, project_scale=project_scale)
-    by_item = {}
+    by_item: dict[int, dict[str, Any]] = {}
+    by_takability: dict[str, int] = {}
     written = 0
     for it in items:
         r = res.get(it.id, {"qty": 0.0, "count": 0})
         qty = round(r.get("qty") or 0.0, 4)
+        count = r.get("count") or 0
+        takability = classify_takability(it.id, count)
         db.update_boq_item(it.id, measured_qty=qty)
-        by_item[it.id] = {"qty": qty, "count": r.get("count") or 0}
+        _log_writeback_audit(project_id, it.id, it.original_qty or 0.0, qty, takability.value)
+        by_item[it.id] = {"qty": qty, "count": count, "takability": takability.value}
+        by_takability[takability.value] = by_takability.get(takability.value, 0) + 1
         if qty:
             written += 1
-    return {"written": written, "total": len(items), "items": by_item}
+    return {
+        "written": written,
+        "total": len(items),
+        "by_takability": by_takability,
+        "items": by_item,
+    }
 
 
 def reset_measured_qty(project_id: int) -> int:

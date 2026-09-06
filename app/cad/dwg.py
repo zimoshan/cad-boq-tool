@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import platform
 import shutil
 import subprocess
 from pathlib import Path
@@ -9,54 +10,96 @@ from pathlib import Path
 from ..config import ODA_INSTALL_HINTS
 
 
-def find_oda_converter() -> str | None:
-    """定位 ODAFileConverter.exe
+# B5 S1 DWG 无头转换（v2.0 §2.5，2026-09-06）：
+# 1) 跨平台 ODA 二进制名（Windows .exe / Linux 无后缀）
+# 2) 增加 accoreconsole（AutoCAD 官方）作为 Windows 备选
+# 3) 增加 Linux ODA 常见安装路径
 
-    优先级：ODA_FILE_CONVERTER 环境变量 > PATH > 常见安装目录。
-    常见目录兼容三种布局：
-      - 直接 exe：<base>/ODAFileConverter.exe
-      - 版本子目录：<base>/ODAFileConverter 27.1.0/ODAFileConverter.exe
-      - 旧式含版本子目录：<base>/ODAFileConverter/<ver>/ODAFileConverter.exe
+_IS_WINDOWS = platform.system() == "Windows"
+_IS_LINUX = platform.system() == "Linux"
+
+ODA_EXE_NAME = "ODAFileConverter.exe" if _IS_WINDOWS else "ODAFileConverter"
+ACCORECONSOLE_NAME = "accoreconsole.exe"  # 仅 Windows
+
+
+def find_oda_converter() -> str | None:
+    """定位 ODAFileConverter（跨平台）
+
+    优先级：ODA_FILE_CONVERTER 环境变量 > PATH > 常见安装目录
+    跨平台兼容：Windows .exe / Linux 无后缀
     """
-    # 1) 环境变量显式指定（指向 exe 或其所在目录均可）
+    # 1) 环境变量显式指定
     env = os.environ.get("ODA_FILE_CONVERTER", "").strip()
     if env:
         p = Path(env)
         if p.is_file():
             return str(p)
         if p.is_dir():
-            cand = p / "ODAFileConverter.exe"
+            cand = p / ODA_EXE_NAME
             if cand.exists():
                 return str(cand)
 
     # 2) PATH
-    name = "ODAFileConverter.exe"
-    found = shutil.which(name)
+    found = shutil.which(ODA_EXE_NAME) or shutil.which("ODAFileConverter")
     if found:
         return found
 
-    # 3) 常见安装目录（ODA_INSTALL_HINTS 已是父目录，如 C:\Program Files\ODA）
-    hints = list(ODA_INSTALL_HINTS) + [
-        str(Path.home() / "AppData" / "Local" / "Programs" / "ODA"),
-        str(Path.home() / "AppData" / "Local" / "Programs" / "ODA" / "ODAFileConverter"),
-    ]
+    # 3) 常见安装目录
+    hints = list(ODA_INSTALL_HINTS) + _default_install_hints()
     for base in hints:
         p = Path(base)
         if not p.is_dir():
             continue
         # 直接 exe
-        direct = p / name
+        direct = p / ODA_EXE_NAME
         if direct.exists():
             return str(direct)
-        # 版本子目录：ODAFileConverter 27.1.0/ODAFileConverter.exe
-        for cand in sorted(p.glob(f"{name}*/{name}"), reverse=True):
+        # 版本子目录
+        for cand in sorted(p.glob(f"{ODA_EXE_NAME}*/{ODA_EXE_NAME}"), reverse=True):
             if cand.exists():
                 return str(cand)
-        # 旧式：<base>/ODAFileConverter/<ver>/ODAFileConverter.exe
-        for cand in sorted(p.glob(f"*/{name}"), reverse=True):
+        # 旧式
+        for cand in sorted(p.glob(f"*/{ODA_EXE_NAME}"), reverse=True):
             if cand.exists():
                 return str(cand)
     return None
+
+
+def find_accoreconsole() -> str | None:
+    """定位 accoreconsole.exe（AutoCAD 官方 CLI，仅 Windows）
+
+    优先级：ACCORECONSOLE_PATH env > AutoCAD 常见安装路径
+    """
+    if not _IS_WINDOWS:
+        return None  # accoreconsole 仅 Windows
+
+    env = os.environ.get("ACCORECONSOLE_PATH", "").strip()
+    if env and Path(env).is_file():
+        return env
+
+    # AutoCAD 2020~2024 默认安装路径
+    for ver in ("2024", "2023", "2022", "2021", "2020"):
+        for base in (r"C:\Program Files\Autodesk", r"C:\Program Files (x86)\Autodesk"):
+            cand = Path(base) / f"AutoCAD {ver}" / "accoreconsole.exe"
+            if cand.exists():
+                return str(cand)
+    return None
+
+
+def _default_install_hints() -> list[str]:
+    """跨平台 ODA 常见安装目录"""
+    hints = [
+        str(Path.home() / "AppData" / "Local" / "Programs" / "ODA"),
+        str(Path.home() / "AppData" / "Local" / "Programs" / "ODA" / "ODAFileConverter"),
+    ]
+    if _IS_LINUX:
+        hints += [
+            "/usr/local/bin",
+            "/opt/ODAFileConverter",
+            "/opt/oda",
+            "/usr/local/ODA",
+        ]
+    return hints
 
 
 def convert_dwg_to_dxf(dwg_path: str, out_dir: str, version: str = "ACAD2018") -> str | None:

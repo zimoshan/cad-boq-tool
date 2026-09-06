@@ -19,6 +19,11 @@ class ParsedDrawing:
     blocks: dict = field(default_factory=dict)            # block name -> [geom_json, ...]
     block_refs: dict = field(default_factory=dict)        # block name -> INSERT 引用数
     blocks_with_count: dict = field(default_factory=dict) # block name -> Entity(INSERT) 列表
+    # B5 S3 单位标定（v2.0 §2.5，2026-09-06）
+    units: str = ""                                       # "mm" / "cm" / "m" / "inch" / "feet" / "unitless"
+    insunits_code: int = 0                                # 原始 DXF $INSUNITS 编码（0=无 1=inch 4=mm 5=cm 6=m）
+    # B5 S4 图纸类型（v2.0 §5.1，drawing_type 字段）
+    drawing_type: str = ""                                # plan / schematic / detail / legend / schedule
 
     @property
     def entity_count(self) -> int:
@@ -28,6 +33,58 @@ class ParsedDrawing:
 # 可渲染/可计量的实体类型
 GEOMETRIC_TYPES = {"LINE", "LWPOLYLINE", "POLYLINE", "ARC", "CIRCLE", "SPLINE",
                    "ELLIPSE", "INSERT", "HATCH", "TEXT", "MTEXT", "POINT"}
+
+
+# B5 S3 单位标定：DXF $INSUNITS → 单位字符串
+# AutoCAD INSUNITS 编码：0=无 1=inch 2=feet 4=mm 5=cm 6=m 8=微 inches
+INSUNITS_MAP = {
+    0: "unitless",
+    1: "inch",
+    2: "feet",
+    4: "mm",
+    5: "cm",
+    6: "m",
+    8: "microinch",
+}
+
+
+def _detect_units(raw_doc) -> tuple[str, int]:
+    """B5 S3：检测 DXF/DWG 文件的单位（从 header $INSUNITS 读取）
+
+    返回 (units_str, insunits_code)
+    """
+    try:
+        # ezdxf 方式
+        insunits = raw_doc.header.get("$INSUNITS", 0)
+        code = int(insunits) if insunits is not None else 0
+        return INSUNITS_MAP.get(code, "unitless"), code
+    except Exception:
+        return "unitless", 0
+
+
+# B5 S4 归一化黑名单：DETAIL / LEGEND / SCHEDULE / TITLE 图层
+LAYER_BLACKLIST_KEYWORDS = (
+    "DETAIL", "LEGEND", "SCHEDULE", "TITLE", "BORDER",
+    "图例", "详图", "标题", "边框", "说明", "目录", "INDEX",
+    "FRAME", "NORTH", "SCALE BAR",  # 指北针、比例尺
+)
+
+
+def _classify_drawing_type(layer_names: list[str]) -> str:
+    """B5 S4：根据图层名特征判定图纸类型
+
+    优先看是否含 DETAIL/LEGEND/SCHEDULE 关键词；否则默认 plan
+    """
+    text = " ".join(layer_names).upper()
+    if any(kw in text for kw in ("DETAIL", "详图")):
+        return "detail"
+    if any(kw in text for kw in ("LEGEND", "图例", "KEY")):
+        return "legend"
+    if any(kw in text for kw in ("SCHEDULE", "目录", "INDEX")):
+        return "schedule"
+    if any(kw in text for kw in ("SCHEMATIC", "Riser", "DIAGRAM")):
+        return "schematic"
+    return "plan"
 
 
 def _aci_to_rgb(entity, layer_rgb_cache: dict) -> tuple:
@@ -372,6 +429,8 @@ def parse_dxf(path: str, progress_callback=None) -> ParsedDrawing:
                 pass
 
     drawing = ParsedDrawing()
+    # B5 S3 单位标定
+    drawing.units, drawing.insunits_code = _detect_units(raw_doc)
     referenced_blocks = set()
 
     try:
@@ -418,6 +477,9 @@ def parse_dxf(path: str, progress_callback=None) -> ParsedDrawing:
     if progress_callback:
         progress_callback(total, total)
         progress_callback(-1, len(referenced_blocks))
+
+    # B5 S4 图纸类型（基于图层名特征）
+    drawing.drawing_type = _classify_drawing_type(list(drawing.layers.keys()))
 
     drawing.blocks = _collect_block_geometry(raw_doc, layer_rgb_cache, referenced_blocks)
     if progress_callback:
