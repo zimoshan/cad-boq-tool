@@ -117,9 +117,9 @@
 #### A.5 · Phase 0 · 文档（同步执行）
 - [x] **P0-25 BACKLOG §1 登记 Phase 0 全部 28 项 + 18 决策** ✅ 2026-09-06
 - [x] **P0-25 BACKLOG §1 登记 Phase 0 全部 28 项 + 18 决策** ✅ 2026-09-06
-- [ ] **P0-26 WEB_MIGRATION_PLAN.md 重写**（按 v2.0 9 阶段 + 18 决策；替代当前散落方案文档）⬜
-- [ ] **P0-27 DESKTOP_TO_WEB_MAPPING.md**（标注删除项 + 重写项 + 零重写项三段式）⬜
-- [ ] **P0-28 CHANGELOG.md 新建**（本次架构切换专条）⬜
+- [x] **P0-26 WEB_MIGRATION_PLAN.md 重写**（按 v2.0 9 阶段 + 18 决策；替代当前散落方案文档）✅ 2026-09-06（[docs/WEB_MIGRATION_PLAN.md](WEB_MIGRATION_PLAN.md)，7 阶段路线 + 技术栈定稿 + 6 段能力缺口 + 关键工程契约）
+- [x] **P0-27 DESKTOP_TO_WEB_MAPPING.md**（标注删除项 + 重写项 + 零重写项三段式）✅ 2026-09-06（[docs/DESKTOP_TO_WEB_MAPPING.md](DESKTOP_TO_WEB_MAPPING.md)，33 文件删除 + webapi 27 + webui 11 + 业务层 ~6800 行零重写）
+- [x] **P0-28 CHANGELOG.md 新建**（本次架构切换专条）✅ 2026-09-06（[CHANGELOG.md](../CHANGELOG.md)，Keep a Changelog 风格 + 9 段：Breaking/Added/Changed/Removed/Fixed/Security/Performance/Documentation/Verification）
 
 #### A.6 ~ A.10 · Phase 1~6（占位，Phase 0 完成后细化）
 - [ ] **Phase 1 · 数据资产闸门**（#16 可核性表实现 + #3 测试数据通路 + ADR-06 Dataset 整理）⬜
@@ -129,7 +129,7 @@
 - [ ] **Phase 5 · AI**（Candidate Union/Embedding/审核/正负样本/置信度校准）⬜
 - [ ] **Phase 6 · 工程化**（版本冲突/跨专业索引/组级降级/StandardProfile/CI/CD）⬜
 
-**Phase 0 出口标准**（9 条）：① git tag pre-webify ✅ ② 桌面端启动入口 0 个 ✅ ③ Node 壳 0 个 ✅ ④ PG + PostGIS + 6 段能力 schema 完整 ✅ ⑤ FastAPI 起服务 + pytest 全绿 ✅（代码就绪 + GitHub Actions CI 配置完成；实际跑通需用户首次 push 触发）⑥ 前端 Vite dev 起 + Chrome 渲染同 design/main.html 🟡（代码就绪 + `npm install` 需装）⑦ 测试数据通路占位 ✅ ⑧ 备份垃圾 0 ✅ ⑨ README 反映新架构 ✅。**当前完成 8.5/9**（仅前端依赖安装待执行）。
+**Phase 0 出口标准**（9 条）：① git tag pre-webify ✅ ② 桌面端启动入口 0 个 ✅ ③ Node 壳 0 个 ✅ ④ PG + PostGIS + 6 段能力 schema 完整 ✅ ⑤ FastAPI 起服务 + pytest 全绿 ✅（代码就绪 + GitHub Actions CI 配置完成；实际跑通需用户首次 push 触发）⑥ 前端 Vite dev 起 + Chrome 渲染同 design/main.html 🟡（代码就绪 + `npm install` 需装）⑦ 测试数据通路占位 ✅ ⑧ 备份垃圾 0 ✅ ⑨ README 反映新架构 ✅。**当前完成 8.5/9**（仅前端依赖安装待执行；Phase 0 全部 28 项条目完成，剩执行性环境配置）。
 
 ---
 
