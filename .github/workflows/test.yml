@@ -1,0 +1,91 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgis:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_DB: cadboq_test
+          POSTGRES_USER: cadboq_test
+          POSTGRES_PASSWORD: test
+          TZ: Asia/Shanghai
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cadboq_test -d cadboq_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # 测试期 env（参考 tests/conftest.py）
+      AUTH_MODE: no_login
+      DATABASE_URL: postgresql+asyncpg://cadboq_test:test@localhost:5432/cadboq_test
+      DATABASE_URL_SYNC: postgresql+psycopg://cadboq_test:test@localhost:5432/cadboq_test
+      SECRET_KEY: test-secret-key-for-ci
+      LOG_DIR: /tmp/cad-boq-ci-logs
+      DRAWING_CACHE_DIR: /tmp/cad-boq-ci-cache
+      EMBEDDING_CACHE_DIR: /tmp/cad-boq-ci-cache
+      BLOCK_GEOMETRY_DIR: /tmp/cad-boq-ci-cache
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio httpx pytest-cov
+
+      - name: Enable PostGIS extension
+        run: |
+          PGPASSWORD=test psql -h localhost -U cadboq_test -d cadboq_test -c "CREATE EXTENSION IF NOT EXISTS postgis;"
+          PGPASSWORD=test psql -h localhost -U cadboq_test -d cadboq_test -c 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp";'
+
+      - name: Run alembic migrations
+        run: |
+          alembic upgrade head
+
+      - name: Run tests
+        run: |
+          pytest tests/ -v --tb=short --cov=webapi --cov=app --cov-report=term-missing
+
+      - name: Verify FastAPI app starts
+        run: |
+          python -c "from webapi.main import app; print('FastAPI app loaded:', app.title)"
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+
+      - name: Install webui deps
+        working-directory: webui
+        run: npm ci
+
+      - name: TypeScript typecheck
+        working-directory: webui
+        run: npm run typecheck
+
+      - name: Build
+        working-directory: webui
+        run: npm run build

@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from webapi.config import get_settings
 from webapi.db import async_session_factory
 from webapi.auth.service import get_or_create_admin
-from webapi.routers import binding, boq, cad, health
+from webapi.routers import binding, boq, cad, dataset, health
 
 settings = get_settings()
 
@@ -52,6 +52,7 @@ app.include_router(health.router)
 app.include_router(cad.router)
 app.include_router(binding.router)
 app.include_router(boq.router)
+app.include_router(dataset.router)
 
 
 # ---------- Phase 0 占位端点 ----------
