@@ -68,7 +68,7 @@ class OllamaBackend(LLMBackend):
         try:
             import ollama
         except ImportError:
-            raise RuntimeError("ollama Python SDK 未装：pip install ollama")
+            raise RuntimeError("ollama Python SDK 未装：pip install ollama") from None
 
         client = ollama.Client(host=self.host)
         t0 = time.time()
