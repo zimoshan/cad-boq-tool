@@ -30,6 +30,9 @@ os.environ.setdefault("LOG_DIR", "/tmp/cad-boq-test-logs")
 os.environ.setdefault("DRAWING_CACHE_DIR", "/tmp/cad-boq-test-cache")
 os.environ.setdefault("EMBEDDING_CACHE_DIR", "/tmp/cad-boq-test-cache")
 os.environ.setdefault("BLOCK_GEOMETRY_DIR", "/tmp/cad-boq-test-cache")
+# Phase 1.2 dataset 通路用 /var/lib/cad-boq 默认 Linux 路径；CI runner 无写权限会 PermissionError
+# 改为 /tmp 避免 CI/Linux 跑时访问 /var/lib
+os.environ.setdefault("TEST_DATA_REGISTRY_PATH", "/tmp/cad-boq-test-cache/test_data_registry.json")
 
 
 import pytest
