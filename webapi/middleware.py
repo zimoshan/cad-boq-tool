@@ -15,7 +15,7 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
     """每个请求生成 UUID + 加 X-Request-ID 响应头 + access log"""
 
     async def dispatch(self, request: Request, call_next) -> Response:
-        request_id = request.headers.get("X-Request-ID") or str(__import__("uuid").uuid4())
+        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
         bind_request_id(request_id)
         start = time.perf_counter()
         try:
