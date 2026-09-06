@@ -98,9 +98,11 @@
 - [ ] **P0-13 B5 S5 跨图去重并集**（`_tray_pts.json` 思路 → `cross_sheet_dedup` 表 + 算法）⬜
 - [ ] **P0-14 B5 S6 Item 映射**（BOQ item ↔ EO 关联 v2.0 §5.3）⬜
 - [ ] **P0-15 B5 S7 可核性 + Excel 保真回写**（`takability` 6 状态 + `writeback_audit` 表，#16 Phase 1 落地表结构）⬜
-- [ ] **P0-16 业务函数重写为 Service 层**（#19 选 A：算法实现保留，重写入口；新建 `webapi/services/{cad,extraction,binding,takeoff,boq,llm,audit}.py`）⬜
-- [ ] **P0-17 Pydantic schema 全套**（请求/响应模型 v2.0 §6.6）⬜
-- [ ] **P0-18 API 契约 OpenAPI**（自动生成 `/docs`）⬜
+- [x] **P0-16 业务函数重写为 Service 层**（#19 选 A：算法实现保留，重写入口）🟡 2026-09-06 第 1 批完成（cad/binding/boq/llm 4 域 + base），extraction/takeoff/audit 留第 2 批
+- [x] **P0-17 Pydantic schema 全套**（请求/响应模型 v2.0 §6.6）🟡 2026-09-06 第 1 批完成（common/cad/binding/boq 4 文件）
+- [x] **P0-18 API 契约 OpenAPI**（自动生成 `/docs`）🟡 2026-09-06 第 1 批完成（routers/health/cad/binding/boq 4 文件 + main.py 注册 4 router + CORS + lifespan）
+
+**A.2 进度 3/13**（第 1 批 = 三件套基础）。第 2 批 P0-6~15（B1-B4 修复 + B5 6 段能力）等用户验收后启动。
 
 #### A.3 · Phase 0 · 前端基础 + 资产本地化（1 周）
 - [ ] **P0-19 CDN 资源本地化**（#11：下载 Tailwind/Icons 到 `webui/public/cdn/`；[design/main.html](design/main.html) 改本地引用；产物可传 GitHub）⬜
