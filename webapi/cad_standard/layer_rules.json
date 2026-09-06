@@ -1,0 +1,45 @@
+{
+  "_doc": "v1.0 §26 + §23 Layer 命名规则（DISCIPLINE-SYSTEM-OBJECT）",
+  "_schema_version": "cad-1.0",
+  "rules": [
+    {
+      "pattern": "ELV-CCTV-*",
+      "discipline": "ELV",
+      "system": "CCTV",
+      "object_type": "camera/reader/recorder",
+      "weight": 1.0
+    },
+    {
+      "pattern": "E-LTG-*",
+      "discipline": "Electrical",
+      "system": "LIGHTING",
+      "object_type": "fixture",
+      "weight": 1.0
+    },
+    {
+      "pattern": "E-PWR-*",
+      "discipline": "Electrical",
+      "system": "POWER",
+      "object_type": "socket/outlet",
+      "weight": 1.0
+    },
+    {
+      "pattern": "P-FIRE-*",
+      "discipline": "Mechanical",
+      "system": "FIRE_PROTECTION",
+      "object_type": "pipe/sprinkler",
+      "weight": 1.0
+    },
+    {
+      "pattern": "M-HVAC-*",
+      "discipline": "Mechanical",
+      "system": "HVAC",
+      "object_type": "duct",
+      "weight": 1.0
+    }
+  ],
+  "blacklist_layers": [
+    "DETAIL", "LEGEND", "SCHEDULE", "TITLE", "BORDER",
+    "图例", "详图", "标题", "边框", "说明", "目录", "INDEX"
+  ]
+}

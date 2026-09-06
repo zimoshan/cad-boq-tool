@@ -1,0 +1,31 @@
+{
+  "_doc": "v1.0 §19 规格匹配 5 状态（EXACT/NORMALIZED_EQUAL/COMPATIBLE/UNKNOWN/CONFLICT）",
+  "_schema_version": "cad-1.0",
+  "states": {
+    "EXACT": "字符串完全相等",
+    "NORMALIZED_EQUAL": "归一化后相等（如 '4MP' == '4 MP'）",
+    "COMPATIBLE": "数值差在 ±10% 内且品牌型号一致",
+    "UNKNOWN": "任一侧规格缺失",
+    "CONFLICT": "关键参数不一致（如 4MP vs 8MP）"
+  },
+  "rules": [
+    {
+      "match": "EXACT",
+      "criteria": "spec_a == spec_b"
+    },
+    {
+      "match": "NORMALIZED_EQUAL",
+      "criteria": "normalize(spec_a) == normalize(spec_b)",
+      "normalization": ["strip_space", "lowercase", "remove_unit_suffix"]
+    },
+    {
+      "match": "COMPATIBLE",
+      "criteria": "abs(numeric_a - numeric_b) / max(a, b) <= 0.1 AND brand_a == brand_b"
+    },
+    {
+      "match": "CONFLICT",
+      "criteria": "spec_a != spec_b AND key_param_differs",
+      "key_params": ["MP", "DN", "size", "voltage", "current"]
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "_doc": "v1.0 §24 Block Attribute 标准（TAG/TYPE/SYSTEM/MODEL/SPEC/SIZE/UNIT/QTY_RULE/LEVEL/ZONE）",
+  "_schema_version": "cad-1.0",
+  "rules": [
+    {
+      "block_pattern": "CAM_DOME",
+      "device_type": "DOME_CAMERA",
+      "system": "CCTV",
+      "default_attributes": {
+        "TYPE": "DOME_CAMERA",
+        "SYSTEM": "CCTV",
+        "UNIT": "No.",
+        "QTY_RULE": "COUNT"
+      }
+    },
+    {
+      "block_pattern": "SPEAKER_PA",
+      "device_type": "PA_SPEAKER",
+      "system": "PA",
+      "default_attributes": {
+        "TYPE": "SPEAKER",
+        "SYSTEM": "PA",
+        "UNIT": "No.",
+        "QTY_RULE": "COUNT"
+      }
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "_doc": "v1.0 §24 Block Attribute 提取规则（spec 提取/品牌识别/单位推断）",
+  "_schema_version": "cad-1.0",
+  "extraction_rules": {
+    "spec": {
+      "tags": ["SPEC", "MODEL", "SIZE"],
+      "patterns": [
+        "(\\d+MP\\b)",
+        "(\\d+AWG\\b)",
+        "(DN\\d+)",
+        "(\\d+mm\\b)"
+      ]
+    },
+    "brand": {
+      "tags": ["BRAND", "MANUFACTURER", "MFR"]
+    },
+    "unit": {
+      "tags": ["UNIT", "QTY_RULE"],
+      "default": "No."
+    }
+  }
+}

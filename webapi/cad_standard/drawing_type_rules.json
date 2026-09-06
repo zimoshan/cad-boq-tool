@@ -1,0 +1,26 @@
+{
+  "_doc": "v1.0 §4 drawing_type 判定规则（plan/schematic/detail/legend/schedule）",
+  "_schema_version": "cad-1.0",
+  "rules": [
+    {
+      "drawing_type": "detail",
+      "layer_keywords": ["DETAIL", "详图"]
+    },
+    {
+      "drawing_type": "legend",
+      "layer_keywords": ["LEGEND", "图例", "KEY"]
+    },
+    {
+      "drawing_type": "schedule",
+      "layer_keywords": ["SCHEDULE", "目录", "INDEX"]
+    },
+    {
+      "drawing_type": "schematic",
+      "layer_keywords": ["SCHEMATIC", "Riser", "DIAGRAM"]
+    },
+    {
+      "drawing_type": "plan",
+      "default": true
+    }
+  ]
+}
