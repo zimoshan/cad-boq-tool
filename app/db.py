@@ -634,7 +634,46 @@ def add_sheet(project_id: int, filename: str, src_path: str, dxf_path: str = "",
 
 
 def update_sheet_blocks(sid: int, blocks_json: str) -> None:
-    """写入块几何缓存（JSON），避免切换图纸时重新解析 DXF"""
+    """写入块几何缓存。
+
+    B3 改造（v2.0 §2.3，2026-09-06）：
+    若 blocks_json 看起来是 dict 形式（{block_name: [geoms]}），自动外置到
+    <BLOCK_GEOMETRY_DIR>/<sha256>.parquet，sheet.blocks_json 字段存 sha256 引用。
+    旧格式（直接 JSON 字符串）保持原样存储，向后兼容。
+    """
+    from .cad.block_geometry_store import (
+        is_blocks_ref,
+        serialize_sheet_blocks_ref,
+        write_block_geometry,
+    )
+    import json
+
+    if not blocks_json:
+        with get_conn() as conn:
+            conn.execute("UPDATE sheet SET blocks_json=? WHERE id=?", ("", sid))
+        return
+
+    # 已是外置引用（如从 PG 读出）→ 直接存
+    if is_blocks_ref(blocks_json):
+        with get_conn() as conn:
+            conn.execute("UPDATE sheet SET blocks_json=? WHERE id=?", (blocks_json, sid))
+        return
+
+    # 尝试解析为 dict → 外置
+    try:
+        blocks_dict = json.loads(blocks_json)
+        if isinstance(blocks_dict, dict) and blocks_dict:
+            sha256 = write_block_geometry(blocks_dict)
+            # 估算 size
+            size_bytes = len(blocks_json.encode("utf-8"))
+            ref = serialize_sheet_blocks_ref(sha256, len(blocks_dict), size_bytes)
+            with get_conn() as conn:
+                conn.execute("UPDATE sheet SET blocks_json=? WHERE id=?", (ref, sid))
+            return
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    # 旧格式：原样存
     with get_conn() as conn:
         conn.execute("UPDATE sheet SET blocks_json=? WHERE id=?", (blocks_json, sid))
 

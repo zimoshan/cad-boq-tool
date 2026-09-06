@@ -20,6 +20,13 @@ BIG_DRAWING_THRESHOLD = 50_000
 # 解析缓存容量上限（P2-5：parse_cache 硬编码 100 → 配置化；可用环境变量覆盖）
 PARSE_CACHE_MAX_ENTRIES = int(os.environ.get("CAD_BOQ_PARSE_CACHE_MAX", "100"))
 
+# B3 块几何外置目录（v2.0 §2.3，2026-09-06）：原 sheet.blocks_json TEXT 34MB → <DIR>/<sha256>.parquet
+# env 化：BLOCK_GEOMETRY_DIR env 优先；默认 ~/.cad-boq-tool/block_geometry/
+BLOCK_GEOMETRY_DIR = os.environ.get(
+    "BLOCK_GEOMETRY_DIR",
+    os.path.join(os.path.expanduser("~"), ".cad-boq-tool", "block_geometry"),
+)
+
 # DWG 转换（ODA 探测：父目录 + 任意 "ODAFileConverter*" 版本子目录）
 ODA_INSTALL_HINTS = [
     r"C:\Program Files\ODA",
