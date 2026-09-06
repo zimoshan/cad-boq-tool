@@ -119,7 +119,7 @@ class OpenAICompatibleBackend(LLMBackend):
         try:
             from openai import OpenAI
         except ImportError:
-            raise RuntimeError("openai Python SDK 未装：pip install openai")
+            raise RuntimeError("openai Python SDK 未装：pip install openai") from None
 
         client = OpenAI(api_key=self.api_key, base_url=self.base_url)
 
