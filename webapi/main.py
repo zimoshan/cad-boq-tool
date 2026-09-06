@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from webapi.config import get_settings
 from webapi.db import async_session_factory
 from webapi.auth.service import get_or_create_admin
-from webapi.routers import audit, binding, boq, cad, dataset, extraction, health, jobs, llm, takeoff
+from webapi.routers import audit, binding, boq, cad, cad_standard, dataset, extraction, health, jobs, llm, takeoff
 
 settings = get_settings()
 
@@ -106,6 +106,8 @@ app.include_router(extraction.router)
 app.include_router(takeoff.router)
 app.include_router(llm.router)
 app.include_router(audit.router)
+# Round 3 commit 2 新增
+app.include_router(cad_standard.router)
 
 
 # ---------- Phase 0 占位端点 ----------

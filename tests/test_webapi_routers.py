@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -324,6 +325,121 @@ def test_audit_precheck(mock_pc, client):
     r = client.get("/api/audit/precheck?project_id=1")
     assert r.status_code == 200
     assert r.json()["coverage"]["boq_coverage_pct"] == 80.0
+
+
+# ---------- /api/dataset manifest 端点（v1.0 §8） ----------
+
+def test_dataset_manifests_list(client):
+    """列出 datasets/ 目录下所有 dataset_id"""
+    r = client.get("/api/dataset/manifests")
+    assert r.status_code == 200
+    data = r.json()
+    assert "datasets" in data
+    assert isinstance(data["datasets"], list)
+
+
+def test_dataset_manifest_get_lbh(client, monkeypatch):
+    """读 lbh manifest（设 TEST_DATA_REGISTRY_PATH 指向项目根）"""
+    import os
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    monkeypatch.setenv("TEST_DATA_REGISTRY_PATH", os.path.join(project_root, "datasets", "lbh", "manifest.json"))
+    from webapi.config import get_settings
+    get_settings.cache_clear()
+    r = client.get("/api/dataset/manifest?dataset_id=lbh")
+    assert r.status_code == 200
+    data = r.json()
+    assert "manifest" in data
+    assert data["manifest"]["dataset_id"] == "LBH-2026-08"
+    assert data["valid"] is True
+    assert data["missing_fields"] == []
+
+
+def test_dataset_manifest_404(client, monkeypatch):
+    import os
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    monkeypatch.setenv("TEST_DATA_REGISTRY_PATH", os.path.join(project_root, "datasets", "lbh", "manifest.json"))
+    from webapi.config import get_settings
+    get_settings.cache_clear()
+    r = client.get("/api/dataset/manifest?dataset_id=nonexistent")
+    assert r.status_code == 404
+
+
+def test_dataset_manifest_update_field(client, monkeypatch):
+    """更新 manifest 单字段（schema_version）"""
+    import os
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    monkeypatch.setenv("TEST_DATA_REGISTRY_PATH", os.path.join(project_root, "datasets", "lbh", "manifest.json"))
+    from webapi.config import get_settings
+    get_settings.cache_clear()
+    r = client.post(
+        "/api/dataset/manifest",
+        json={"dataset_id": "lbh", "key": "schema_version", "value": "cad-1.0"},
+    )
+    assert r.status_code == 200
+    assert r.json()["updated"] is True
+    assert r.json()["manifest"]["schema_version"] == "cad-1.0"
+
+
+# ---------- /api/cad-standard 5 规则端点（v1.0 §26） ----------
+
+def test_cad_standard_list_rules(client):
+    r = client.get("/api/cad-standard/rules")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["total"] == 5  # 5 个 JSON 文件
+    assert "layer_rules.json" in data["files"]
+    assert "specification_rules.json" in data["files"]
+
+
+def test_cad_standard_get_layer_rules(client):
+    r = client.get("/api/cad-standard/rules/layer_rules")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["name"] == "layer_rules.json"
+    assert "rules" in data["content"]
+    assert "blacklist_layers" in data["content"]
+
+
+def test_cad_standard_update_rule(client, tmp_path, monkeypatch):
+    """更新规则（写 tmp 目录避免污染真实文件）"""
+    import json
+    from webapi.config import get_settings
+
+    # 准备：复制真实规则到 tmp 目录
+    real_path = get_settings().cad_standard_dir if hasattr(get_settings(), 'cad_standard_dir') else None
+    # 直接 patch routers/cad_standard._standard_dir 返回 tmp
+    src = Path(__file__).parent.parent / "webapi" / "cad_standard" / "specification_rules.json"
+    target = tmp_path / "specification_rules.json"
+    target.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+
+    with patch("webapi.routers.cad_standard._standard_dir", return_value=tmp_path):
+        r = client.put(
+            "/api/cad-standard/rules/specification_rules",
+            json={"content": {
+                "_doc": "test update",
+                "_schema_version": "cad-1.0",
+                "states": {"TEST": "test"},
+                "rules": [],
+            }},
+        )
+    assert r.status_code == 200
+    assert r.json()["updated"] is True
+    # 验证 tmp 文件被更新
+    new_content = json.loads(target.read_text(encoding="utf-8"))
+    assert new_content["_doc"] == "test update"
+
+
+def test_cad_standard_update_unknown_rule_400(client):
+    r = client.put(
+        "/api/cad-standard/rules/unknown_file",
+        json={"content": {"foo": "bar"}},
+    )
+    assert r.status_code == 400
+
+
+def test_cad_standard_404(client):
+    r = client.get("/api/cad-standard/rules/nonexistent_file")
+    assert r.status_code == 404
 
 
 # ---------- RBAC 装饰器端到端（简化版：仅校验不抛 403） ----------

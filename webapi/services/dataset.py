@@ -198,6 +198,97 @@ def get_active_entries_json() -> list[dict[str, Any]]:
     return [e for e in list_entries_json() if e.get("is_active", True)]
 
 
+# ---------- v1.0 §8 manifest JSON 读取/校验 ----------
+
+from webapi.config import get_settings
+
+
+def load_manifest(dataset_id: str | None = None) -> dict[str, Any] | None:
+    """v1.0 §8：读 manifest.json
+
+    路径约定：settings.test_data_registry_path 指向 manifest.json 所在目录
+    或 manifest.json 自身（parent 推断）。
+    """
+    settings = get_settings()
+    registry = Path(settings.test_data_registry_path)
+    # 候选路径：registry 自身 / registry 父目录 / 向上两级到 project root / datasets
+    candidates = []
+    if dataset_id:
+        candidates.append(registry.parent / dataset_id / "manifest.json")
+        candidates.append(registry.parent / "manifest.json" if not dataset_id or dataset_id == "lbh" else None)
+    candidates.append(registry / "manifest.json" if registry.suffix == ".json" else None)
+    # 兼容旧约定：registry 在 data/projects 下，向上两级到 repo root
+    candidates.append(registry.parent.parent / "datasets" / (dataset_id or "lbh") / "manifest.json")
+    # 最后 fallback：相对工作目录
+    candidates.append(Path.cwd() / "datasets" / (dataset_id or "lbh") / "manifest.json")
+
+    for c in candidates:
+        if c and c.exists() and c.is_file():
+            try:
+                return json.loads(c.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+    return None
+
+
+def list_datasets() -> list[str]:
+    """列出 datasets/ 下所有 dataset_id（从目录名）"""
+    settings = get_settings()
+    registry = Path(settings.test_data_registry_path)
+    # 找 datasets 父目录
+    candidates = [
+        registry.parent / "datasets",  # registry 在 datasets/<id>/ 下
+        registry.parent.parent / "datasets",  # registry 在 data/projects 下
+        Path.cwd() / "datasets",
+    ]
+    for base in candidates:
+        if base.exists() and base.is_dir():
+            return sorted([d.name for d in base.iterdir() if d.is_dir()])
+    return []
+
+
+def validate_manifest(manifest: dict[str, Any]) -> list[str]:
+    """v1.0 §8 manifest 必填字段校验"""
+    required = ["dataset_id", "project", "schema_version", "parser_version", "source_revision"]
+    return [k for k in required if not manifest.get(k)]
+
+
+def _resolve_manifest_path(dataset_id: str, must_exist: bool = True) -> Path | None:
+    """推断 manifest.json 写入/读取路径"""
+    settings = get_settings()
+    registry = Path(settings.test_data_registry_path)
+    candidates = [
+        registry.parent / dataset_id / "manifest.json",
+        registry / "manifest.json" if registry.suffix == ".json" else None,
+        registry.parent.parent / "datasets" / dataset_id / "manifest.json",
+        Path.cwd() / "datasets" / dataset_id / "manifest.json",
+    ]
+    for c in candidates:
+        if c and c.exists() and c.is_file():
+            return c
+    # 不存在时返回第 1 个候选（写入时新建）
+    if not must_exist:
+        return candidates[0]
+    return None
+
+
+def update_manifest_field(dataset_id: str, key: str, value: Any) -> dict[str, Any] | None:
+    """更新 manifest 单字段"""
+    manifest = load_manifest(dataset_id)
+    if not manifest:
+        return None
+    missing = validate_manifest(manifest)
+    if missing:
+        raise ServiceError(f"Manifest missing required fields: {missing}", code="invalid_manifest")
+    manifest[key] = value
+    manifest["generated_at"] = datetime.now().isoformat()
+    path = _resolve_manifest_path(dataset_id, must_exist=False)
+    if path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    return manifest
+
+
 # ---------- 统一接口（自动选后端，TEST_DATA_BACKEND=db/json，default=json 向后兼容） ----------
 
 import os

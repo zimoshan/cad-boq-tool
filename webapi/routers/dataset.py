@@ -73,3 +73,45 @@ async def deactivate(req: DeactivateRequest, db: AsyncSession = Depends(get_db))
     else:
         ok = dataset_service.deactivate_entry_json(req.entry_id)
     return {"ok": ok, "entry_id": req.entry_id}
+
+
+# v1.0 §8 manifest 端点
+@router.get("/manifests")
+@requires("dataset:read")
+async def list_manifests() -> dict:
+    """v1.0 §8 列出所有 dataset 目录"""
+    datasets = dataset_service.list_datasets()
+    return {"datasets": datasets, "total": len(datasets)}
+
+
+@router.get("/manifest")
+@requires("dataset:read")
+async def get_manifest(dataset_id: str = "lbh") -> dict:
+    """v1.0 §8 读指定 dataset 的 manifest.json"""
+    manifest = dataset_service.load_manifest(dataset_id)
+    if not manifest:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=f"Manifest for {dataset_id} not found")
+    missing = dataset_service.validate_manifest(manifest)
+    return {"manifest": manifest, "missing_fields": missing, "valid": not missing}
+
+
+class ManifestUpdateRequest(BaseModel):
+    dataset_id: str = "lbh"
+    key: str
+    value: str  # schema_version / parser_version / source_revision 等字符串
+
+
+@router.post("/manifest")
+@requires("dataset:write")
+async def update_manifest(req: ManifestUpdateRequest) -> dict:
+    """v1.0 §8 更新 manifest 单字段"""
+    try:
+        manifest = dataset_service.update_manifest_field(req.dataset_id, req.key, req.value)
+    except Exception as e:
+        from webapi.services.base import ServiceError
+        raise ServiceError(str(e), code="manifest_update_error")
+    if not manifest:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Manifest not found")
+    return {"updated": True, "manifest": manifest}
