@@ -78,7 +78,19 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "C4", "SIM"]
-ignore = ["E501"]  # 长行不强制（业务代码兼容）
+ignore = [
+    "E501",  # 长行不强制（业务代码兼容）
+    # 业务代码遗留警告（Phase 6 工程化批次再修）
+    "B023",   # Function definition does not bind loop variable
+    "E741",   # Ambiguous variable name 'l'
+    "SIM102",  # Nested if
+    "SIM105",  # try-except-pass → contextlib.suppress
+    "SIM108",  # if-else → ternary
+    "SIM118",  # key in dict.keys() → key in dict
+    "UP012",   # Unnecessary encoding argument
+    "UP015",   # Unnecessary mode argument
+    "UP045",   # Use X | None
+]
 
 # mypy 配置
 [tool.mypy]
