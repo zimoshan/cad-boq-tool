@@ -29,11 +29,19 @@ ODA_INSTALL_HINTS = [
 ]
 
 # BOQ 表头候选（用于自动探测；支持中文）
+# B2 扩展（v2.0 §2.2，2026-09-06）：加 section / item_key / brand / bill_qty / installed_qty / qty_remaining 6 字段
 BOQ_HEADER_CANDIDATES = {
-    "code": ["编号", "序号", "item no", "item no.", "code", "no", "no.", "item code"],
-    "description": ["描述", "项目名称", "名称", "工作内容", "description", "item description", "title", "name"],
+    "code": ["编号", "序号", "item no", "item no.", "code", "no", "no.", "item code", "item"],
+    "description": ["描述", "项目名称", "名称", "工作内容", "description", "item description", "title", "name", "desc"],
     "unit": ["单位", "unit", "uom"],
-    "original_qty": ["数量", "工程量", "qty", "quantity", "original qty"],
+    "original_qty": ["数量", "工程量", "qty", "quantity", "original qty", "installed"],
+    # B2 新增 5 字段
+    "section": ["section", "分部", "chapter", "分部名称"],
+    "item_key": ["item key", "itemkey", "key", "ref"],
+    "brand": ["品牌", "brand", "manufacturer", "mfr"],
+    "bill_qty": ["bill qty", "bill quantity", "bill", "招标数量", "f", "f qty"],
+    "installed_qty": ["installed qty", "installed quantity", "installed", "已安装数量", "g", "g qty"],
+    "qty_remaining": ["qty remaining", "quantity remaining", "remaining", "剩余数量", "h", "h qty"],
 }
 
 # 默认比例（图纸单位 → 实际单位；mm→m 为 0.001）
