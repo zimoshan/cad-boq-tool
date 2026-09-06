@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { api } from "./api/client";
 import { Layout, RailKey } from "./components/Layout";
 import { BindingWorkbench } from "./components/BindingWorkbench";

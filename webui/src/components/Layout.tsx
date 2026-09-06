@@ -11,7 +11,7 @@ export function Layout(props: { activeRail: RailKey; onRailChange: (k: RailKey) 
   const { activeRail, onRailChange, statusBar, children, theme } = props;
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
-      <header style={{ height: theme.size.topbarHeight, background: "var(--bg-panel)", borderBottom: "1px solid var(--bg-border)", display: "flex", alignAlignItems: "center", padding: "0 16px", gap: 12 }}>
+      <header style={{ height: theme.size.topbarHeight, background: "var(--bg-panel)", borderBottom: "1px solid var(--bg-border)", display: "flex", alignItems: "center", padding: "0 16px", gap: 12 }}>
         <div style={{ fontWeight: 600, color: "var(--accent-primary)" }}>CAD·BOQ</div>
         <div style={{ flex: 1, color: "var(--text-muted)" }}>v0.2.0-webify</div>
       </header>
