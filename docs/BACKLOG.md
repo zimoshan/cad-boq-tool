@@ -116,10 +116,24 @@
 
 #### A.5 · Phase 0 · 文档（同步执行）
 - [x] **P0-25 BACKLOG §1 登记 Phase 0 全部 28 项 + 18 决策** ✅ 2026-09-06
-- [x] **P0-25 BACKLOG §1 登记 Phase 0 全部 28 项 + 18 决策** ✅ 2026-09-06
 - [x] **P0-26 WEB_MIGRATION_PLAN.md 重写**（按 v2.0 9 阶段 + 18 决策；替代当前散落方案文档）✅ 2026-09-06（[docs/WEB_MIGRATION_PLAN.md](WEB_MIGRATION_PLAN.md)，7 阶段路线 + 技术栈定稿 + 6 段能力缺口 + 关键工程契约）
 - [x] **P0-27 DESKTOP_TO_WEB_MAPPING.md**（标注删除项 + 重写项 + 零重写项三段式）✅ 2026-09-06（[docs/DESKTOP_TO_WEB_MAPPING.md](DESKTOP_TO_WEB_MAPPING.md)，33 文件删除 + webapi 27 + webui 11 + 业务层 ~6800 行零重写）
 - [x] **P0-28 CHANGELOG.md 新建**（本次架构切换专条）✅ 2026-09-06（[CHANGELOG.md](../CHANGELOG.md)，Keep a Changelog 风格 + 9 段：Breaking/Added/Changed/Removed/Fixed/Security/Performance/Documentation/Verification）
+
+#### A.5+ · v1.0 数据资产与实施方案适配（2026-09-06，Round 1+2 已完成）
+- [x] **P0-30 §8/§9/§10：manifest + parsed 版本化 + DXF 目录规范** ✅ 2026-09-06（[datasets/lbh/](datasets/lbh/) 占位结构 + [manifest.json](datasets/lbh/manifest.json) schema + parsed/v2/v3 目录约定）
+- [x] **P0-31 §13：4 个 cad 端点（metadata/layers/blocks/entities）** ✅ 2026-09-06（[webapi/routers/cad.py](webapi/routers/cad.py) 4 GET 端点）
+- [x] **P0-32 §17/§19：negative_samples + 规格匹配 5 状态** ✅ 2026-09-06（alembic 0005 + [webapi/services/spec_match.py](webapi/services/spec_match.py) 5 状态 + reject 自动写负样本）
+- [x] **P0-33 §18/§20：Candidate Union 5 层 + Confidence Calibration 5 维** ✅ 2026-09-06（[app/binding/candidate_union.py](app/binding/candidate_union.py) + [app/binding/calibration.py](app/binding/calibration.py)）
+- [x] **P0-34 §22：几何算法优化（SPLINE/平行线对/HATCH 多环）** ✅ 2026-09-06（[app/cad/geometry_optimizer.py](app/cad/geometry_optimizer.py) 3 函数）
+- [x] **P0-35 §25/§26：sheet 5 元数据 + cad_standard 5 规则** ✅ 2026-09-06（alembic 0004 + [webapi/cad_standard/](webapi/cad_standard/) 5 JSON 模板）
+- [x] **P0-36 §33/§34：data/ 顶层目录 + 严格命名** ✅ 2026-09-06（[data/README.md](data/README.md) + 顶层目录约定）
+- [x] **P0-37 §29：预检页面 6 维度** ✅ 2026-09-06（[webapi/routers/audit.py](webapi/routers/audit.py) `/api/audit/precheck` + drawing_type/takability/coverage/granularity/version/provisional）
+
+#### A.5++ · 测试覆盖 + Bug 修复（2026-09-06）
+- [x] **P0-38 webapi router 集成测试**（TestClient + mock services）✅ 2026-09-06（[tests/test_webapi_routers.py](tests/test_webapi_routers.py) 32 case 覆盖 35 routes）
+- [x] **P0-39 app 模块单测**（boq_parser/cross_sheet_dedup/llm runner+schema）✅ 2026-09-06（[tests/test_app_modules.py](tests/test_app_modules.py) 22 case）
+- [x] **P0-40 BoqItem 6 字段 bug 修复**（P0-7 提交时 boq_parser 用 6 字段，models.py 未加 → 运行时 TypeError）✅ 2026-09-06（[app/models.py](app/models.py) BoqItem 加 section/item_key/brand/bill_qty/installed_qty/qty_remaining 6 字段）
 
 #### A.6 ~ A.10 · Phase 1~6（占位，Phase 0 完成后细化）
 - [ ] **Phase 1 · 数据资产闸门**（#16 可核性表实现 + #3 测试数据通路 + ADR-06 Dataset 整理）⬜
