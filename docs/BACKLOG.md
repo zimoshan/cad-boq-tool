@@ -92,12 +92,12 @@
 - [x] **P0-7 B2 BoqItem 模型扩展**（v2.0 §2.2：section + bill_qty/installed_qty/qty_remaining + Item 主键）✅ 2026-09-06（commit `6f41f82`，6 字段 + BOQ_HEADER_CANDIDATES 5 新表头 + _extract_item_key 多格式）
 - [x] **P0-8 B3 块几何外置**（v2.0 §2.3：`sheet.blocks_json` 34MB → `block_geometry/<sha256>.parquet`）✅ 2026-09-06（commit `ba1cb40`，app/cad/block_geometry_store.py + db.py update_sheet_blocks 智能路由 + 向后兼容）
 - [x] **P0-9 B4 空间列 + 视口查询**（v2.0 §2.4：`entity` 加 min_x/max_x/min_y/max_y + PostGIS geometry + `/api/cad/viewport?bbox=`）✅ 2026-09-06（commit `7b71bee`，db.py replace_entities 14 列 + 旧 schema 兼容回退 + webapi/services/cad.py query_viewport 已用 GIST 索引）
-- [ ] **P0-10 B5 S1 DWG 无头转换**（[dwg.py](app/cad/dwg.py) 加 accoreconsole 路径 + Linux ODA 二进制）⬜
-- [ ] **P0-11 B5 S3 单位标定**（drawing.units 字段 + INSUNITS 自动检测）⬜
-- [ ] **P0-12 B5 S4 归一化 + 黑名单**（型号词表 + DETAIL/LEGEND 层黑名单 v2.0 §5.1）⬜
-- [ ] **P0-13 B5 S5 跨图去重并集**（`_tray_pts.json` 思路 → `cross_sheet_dedup` 表 + 算法）⬜
-- [ ] **P0-14 B5 S6 Item 映射**（BOQ item ↔ EO 关联 v2.0 §5.3）⬜
-- [ ] **P0-15 B5 S7 可核性 + Excel 保真回写**（`takability` 6 状态 + `writeback_audit` 表，#16 Phase 1 落地表结构）⬜
+- [x] **P0-10 B5 S1 DWG 无头转换**（[dwg.py](app/cad/dwg.py) 加 accoreconsole 路径 + Linux ODA 二进制）✅ 2026-09-06（跨平台 ODA_EXE_NAME + find_accoreconsole + Linux 路径）
+- [x] **P0-11 B5 S3 单位标定**（drawing.units 字段 + INSUNITS 自动检测）✅ 2026-09-06（ParsedDrawing.units/insunits_code + _detect_units + INSUNITS_MAP 8 编码）
+- [x] **P0-12 B5 S4 归一化 + 黑名单**（型号词表 + DETAIL/LEGEND 层黑名单 v2.0 §5.1）✅ 2026-09-06（_classify_drawing_type 5 分类 + LAYER_BLACKLIST_KEYWORDS 14 关键词）
+- [x] **P0-13 B5 S5 跨图去重并集**（`_tray_pts.json` 思路 → `cross_sheet_dedup` 表 + 算法）✅ 2026-09-06（cross_sheet_dedup.py 新增 + bbox 重叠 ≥0.5 贪心聚类）
+- [x] **P0-14 B5 S6 Item 映射**（BOQ item ↔ EO 关联 v2.0 §5.3）✅ 2026-09-06（reviewer.confirm_binding 已实现，#2 B5 一次性补齐包含）
+- [x] **P0-15 B5 S7 可核性 + Excel 保真回写**（`takability` 6 状态 + `writeback_audit` 表，#16 Phase 1 落地表结构）✅ 2026-09-06（Takability Enum 6 状态 + writeback_audit 表 + alembic 0002 迁移）
 - [x] **P0-16 业务函数重写为 Service 层**（#19 选 A：算法实现保留，重写入口）🟡 2026-09-06 第 1 批完成（cad/binding/boq/llm 4 域 + base），extraction/takeoff/audit 留第 2 批
 - [x] **P0-17 Pydantic schema 全套**（请求/响应模型 v2.0 §6.6）🟡 2026-09-06 第 1 批完成（common/cad/binding/boq 4 文件）
 - [x] **P0-18 API 契约 OpenAPI**（自动生成 `/docs`）🟡 2026-09-06 第 1 批完成（routers/health/cad/binding/boq 4 文件 + main.py 注册 4 router + CORS + lifespan）
@@ -128,7 +128,7 @@
 - [ ] **Phase 5 · AI**（Candidate Union/Embedding/审核/正负样本/置信度校准）⬜
 - [ ] **Phase 6 · 工程化**（版本冲突/跨专业索引/组级降级/StandardProfile/CI/CD）⬜
 
-**Phase 0 出口标准**（9 条）：① git tag pre-webify ✅ ② 桌面端启动入口 0 个 ✅ ③ Node 壳 0 个 ✅ ④ PG + PostGIS + 6 段能力 schema 完整 ⬜ ⑤ FastAPI 起服务 + pytest 全绿 ⬜ ⑥ 前端 Vite dev 起 + Chrome 渲染同 design/main.html ⬜ ⑦ 测试数据通路占位完成 ⬜ ⑧ 备份垃圾 0 ✅ ⑨ README 反映新架构 ✅。**当前完成 5/9**（清理类全部完成，工程类待启动）。
+**Phase 0 出口标准**（9 条）：① git tag pre-webify ✅ ② 桌面端启动入口 0 个 ✅ ③ Node 壳 0 个 ✅ ④ PG + PostGIS + 6 段能力 schema 完整 ✅ ⑤ FastAPI 起服务 + pytest 全绿 🟡（代码就绪 + 依赖需装）⑥ 前端 Vite dev 起 + Chrome 渲染同 design/main.html ⬜ ⑦ 测试数据通路占位 ✅ ⑧ 备份垃圾 0 ✅ ⑨ README 反映新架构 ✅。**当前完成 7.5/9**（B1-B4 + B5 6 段全部落地，前端与依赖安装待 Phase 2）。
 
 ---
 
