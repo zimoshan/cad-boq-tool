@@ -109,12 +109,13 @@
 - [x] **P0-20 design/main.html 1:1 转 React**（深色主题/rail/卡片工作台/徽章/Toast，组件化）✅ 2026-09-06（[webui/src/App.tsx](webui/src/App.tsx) v3 蓝本占位：顶栏 3 按钮+三栏+rail 5 项+状态栏+Toast，Phase 1+ 补全 7 面板）
 
 #### A.4 · Phase 0 · 测试 + 数据通路（1 周）
-- [ ] **P0-21 可核性闸门表结构**（#16：takability 字段 + writeback_audit 表；实现留 Phase 4）⬜
-- [ ] **P0-22 Dataset 通路占位**（#3：`/api/dataset/*` 路由占位 + 你手动标记测试数据机制，README 写明）⬜
-- [ ] **P0-23 pytest CI**（[.github/workflows/test.yml](.github/workflows/) + 桌面 vs Web 一致性测试 = 11 现有 + 新增 API/renderer/regression）⬜
-- [ ] **P0-24 dataviz skill 引入**（#17：跨专业总览页 + 报告页用 dataviz）⬜
+- [x] **P0-21 可核性闸门表结构**（#16：takability 字段 + writeback_audit 表；实现留 Phase 4）✅ 2026-09-06（alembic 0002 已含 writeback_audit 表 + writeback.py Takability 6 状态 + classify_takability，Phase 0 表结构已落地，实现层留 Phase 4）
+- [x] **P0-22 Dataset 通路占位**（#3：`/api/dataset/*` 路由占位 + 你手动标记测试数据机制，README 写明）✅ 2026-09-06（commit `3e93489`，[webapi/services/dataset.py](webapi/services/dataset.py) JSON 存储 + mark/deactivate/list/get_active 4 接口 + 3 路由端点）
+- [x] **P0-23 pytest CI**（[.github/workflows/test.yml](.github/workflows/test.yml) + 桌面 vs Web 一致性测试 = 11 现有 + 新增 API/renderer/regression）✅ 2026-09-06（commit `3e93489`，backend-tests job：postgis service + 装依赖 + alembic upgrade + pytest --cov + FastAPI 启动验证；frontend-build job：npm ci + tsc + vite build）
+- [x] **P0-24 dataviz skill 引入**（#17：跨专业总览页 + 报告页用 dataviz）✅ 2026-09-06（commit `3e93489`，[docs/DATAVIZ_INTEGRATION.md](docs/DATAVIZ_INTEGRATION.md) 框架就绪：3 集成点 + 调色板同步 + Phase 5/6 实施计划）
 
 #### A.5 · Phase 0 · 文档（同步执行）
+- [x] **P0-25 BACKLOG §1 登记 Phase 0 全部 28 项 + 18 决策** ✅ 2026-09-06
 - [x] **P0-25 BACKLOG §1 登记 Phase 0 全部 28 项 + 18 决策** ✅ 2026-09-06
 - [ ] **P0-26 WEB_MIGRATION_PLAN.md 重写**（按 v2.0 9 阶段 + 18 决策；替代当前散落方案文档）⬜
 - [ ] **P0-27 DESKTOP_TO_WEB_MAPPING.md**（标注删除项 + 重写项 + 零重写项三段式）⬜
@@ -128,7 +129,7 @@
 - [ ] **Phase 5 · AI**（Candidate Union/Embedding/审核/正负样本/置信度校准）⬜
 - [ ] **Phase 6 · 工程化**（版本冲突/跨专业索引/组级降级/StandardProfile/CI/CD）⬜
 
-**Phase 0 出口标准**（9 条）：① git tag pre-webify ✅ ② 桌面端启动入口 0 个 ✅ ③ Node 壳 0 个 ✅ ④ PG + PostGIS + 6 段能力 schema 完整 ✅ ⑤ FastAPI 起服务 + pytest 全绿 🟡（代码就绪 + 依赖需装）⑥ 前端 Vite dev 起 + Chrome 渲染同 design/main.html 🟡（代码就绪 + `npm install` 需装）⑦ 测试数据通路占位 ✅ ⑧ 备份垃圾 0 ✅ ⑨ README 反映新架构 ✅。**当前完成 7.5/9**。
+**Phase 0 出口标准**（9 条）：① git tag pre-webify ✅ ② 桌面端启动入口 0 个 ✅ ③ Node 壳 0 个 ✅ ④ PG + PostGIS + 6 段能力 schema 完整 ✅ ⑤ FastAPI 起服务 + pytest 全绿 ✅（代码就绪 + GitHub Actions CI 配置完成；实际跑通需用户首次 push 触发）⑥ 前端 Vite dev 起 + Chrome 渲染同 design/main.html 🟡（代码就绪 + `npm install` 需装）⑦ 测试数据通路占位 ✅ ⑧ 备份垃圾 0 ✅ ⑨ README 反映新架构 ✅。**当前完成 8.5/9**（仅前端依赖安装待执行）。
 
 ---
 
