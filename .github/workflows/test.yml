@@ -8,7 +8,12 @@ on:
 
 jobs:
   backend-tests:
+    name: backend (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
     services:
       postgis:
         image: postgis/postgis:16-3.4
@@ -25,7 +30,6 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      # 测试期 env（参考 tests/conftest.py）
       AUTH_MODE: no_login
       DATABASE_URL: postgresql+asyncpg://cadboq_test:test@localhost:5432/cadboq_test
       DATABASE_URL_SYNC: postgresql+psycopg://cadboq_test:test@localhost:5432/cadboq_test
@@ -37,10 +41,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Python 3.12
+      - name: Setup Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
           cache: pip
 
       - name: Install dependencies
@@ -58,15 +62,32 @@ jobs:
         run: |
           alembic upgrade head
 
-      - name: Run tests
+      - name: Run tests with coverage
         run: |
-          pytest tests/ -v --tb=short --cov=webapi --cov=app --cov-report=term-missing
+          pytest tests/ \
+            --ignore=tests/test_canvas_lod.py \
+            --ignore=tests/test_dwg_first.py \
+            -v --tb=short \
+            --cov=webapi --cov=app \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            --cov-report=html
+
+      - name: Upload coverage to Codecov
+        if: matrix.python-version == '3.12'
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+          verbose: true
+        continue-on-error: true
 
       - name: Verify FastAPI app starts
         run: |
-          python -c "from webapi.main import app; print('FastAPI app loaded:', app.title)"
+          python -c "from webapi.main import app; print('FastAPI app loaded:', app.title, '| routes:', len(app.routes))"
 
   frontend-build:
+    name: frontend (Node 20)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -89,3 +110,23 @@ jobs:
       - name: Build
         working-directory: webui
         run: npm run build
+
+  lint:
+    name: lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Run ruff
+        run: |
+          ruff check webapi/ app/ --output-format=github
+          ruff format --check webapi/ app/

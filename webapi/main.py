@@ -39,8 +39,50 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="cad-boq-tool Web API",
     version="0.2.0-webify",
-    description="CAD 工程量算量工具 - Web 化迁移 Phase 0（2026-09-06）",
+    description="""
+CAD·BOQ 工程量算量工具 Web API（2026-09-06 Web 化 Phase 0）。
+
+## 模块
+- **health** — 健康检查 / 根端点
+- **cad** — CAD 解析 + 视口查询（PostGIS GIST 索引）
+- **binding** — 绑定候选生成（4 层）+ 确认/拒绝（跨图 SUPERSEDED）
+- **boq** — BOQ Excel 解析（B1 4 表头 + B2 6 字段）+ 回写（B5 S7 takability 6 状态）
+- **dataset** — 测试数据通路（#3 手动标记）
+- **jobs** — 进程内 JobManager + SSE 实时进度（v2.0 ADR-05）
+- **extraction** — 工程对象提取（三类 EO）
+- **takeoff** — AI 算量触发（单图/文件夹）
+- **llm** — LLM 配置中心 + 5 后端 chat 代理（#9）
+- **audit** — llm_run 审计 + 跨维统计
+
+## 认证
+默认 `AUTH_MODE=no_login`（Phase 0 阶段），所有端点放行。
+未来切 `login` 模式：JWT + Casbin 策略生效。
+
+## 性能
+- FastAPI 30 routes（单进程模块化单体）
+- JobManager 默认 2 worker（`JOB_MAX_WORKERS` env 调）
+- 视口查询毫秒级（PostGIS GIST 索引）
+""",
     lifespan=lifespan,
+    contact={
+        "name": "cad-boq-tool",
+        "url": "https://github.com/zimoshan/cad-boq-tool",
+    },
+    license_info={
+        "name": "MIT",
+    },
+    openapi_tags=[
+        {"name": "health", "description": "健康检查 + 根端点"},
+        {"name": "cad", "description": "CAD 解析 + 视口查询"},
+        {"name": "binding", "description": "绑定候选生成 / 确认 / 拒绝"},
+        {"name": "boq", "description": "BOQ Excel 解析 + 回写"},
+        {"name": "dataset", "description": "测试数据通路（手动标记）"},
+        {"name": "jobs", "description": "异步任务 + SSE 实时进度"},
+        {"name": "extraction", "description": "工程对象提取"},
+        {"name": "takeoff", "description": "AI 算量触发"},
+        {"name": "llm", "description": "LLM 配置 + 5 后端 chat"},
+        {"name": "audit", "description": "审计 + 跨维统计"},
+    ],
 )
 
 # CORS
