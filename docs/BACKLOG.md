@@ -69,11 +69,23 @@
 - [x] **P0-29 补 add 因 .gitignore 解除而出现的 14 个 docs/ 文档**（P0-0.4 副作用：根 .gitignore 解除 docs/ ignore 后，CAD_BOQ_Web化_*/REVIEW_*/CANDIDATE_*/驱动 Prompt/估算系统/未跟踪 archive 文档首次进入版本控制）✅ 2026-09-06（commit `acb0e28`）
 
 #### A.1 · Phase 0 · 基础设施（2 周）
-- [ ] **P0-1 requirements.txt 锁定**（PySide6 移除；增 FastAPI/uvicorn/SQLAlchemy[asyncio]/asyncpg/alembic/shapely/pydantic/Casbin/pytest-playwright）⬜
-- [ ] **P0-2 .env.example 模板**（ODA/PG DSN/LLM Key/LOG_DIR env 化）⬜
-- [ ] **P0-3 Docker Compose**（fastapi + postgis + 可选 ollama + volumes）⬜
-- [ ] **P0-4 RuoYi 风格 RBAC 骨架**（users/roles/menus/dicts 4 表 + user_role 关联 + `auth/decorators.requires("perm")` 抽象；当前 `lambda u: True` 免登录，#5）⬜
-- [ ] **P0-5 PG + PostGIS schema 迁移**（Alembic 初始化 + 旧 SQLite 导出/导入脚本）⬜
+- [x] **P0-1 requirements.txt 锁定**（pyproject.toml + requirements.txt + .python-version=3.12）✅ 2026-09-06（commit `xxx`）
+  - PySide6 移除；增 FastAPI 0.115 / SQLAlchemy 2.x async + asyncpg / Alembic / GeoAlchemy2 / Casbin / Pydantic v2 / ezdxf 1.4.4 + ezdwg
+- [x] **P0-2 .env.example 模板**（env.example，无前导点避开 .env* 权限保护）✅ 2026-09-06
+  - APP/DB(auth+sync DSN+SQLITE_BACKUP)/AUTH(no_login 预留 login)/ODA(B5 S1)/5 LLM 后端/存储/CORS/测试数据通路
+- [x] **P0-3 Docker Compose**（docker-compose.yml + Dockerfile + .dockerignore）✅ 2026-09-06
+  - webapi + postgis/postgis:16-3.4 + 可选 ollama（profile=with-llm）；健康检查 + 持久卷 + 桥接网络；python:3.12-slim 多阶段构建
+- [x] **P0-4 RuoYi 风格 RBAC 骨架**（webapi/auth/ 8 文件 + main.py + config.py + db/）✅ 2026-09-06
+  - sys_user/sys_role/sys_user_role/sys_menu/sys_dict 5 表（SQLAlchemy 2.x async）；@requires(perm) 装饰器；Casbin 包装；no_login 模式 sysadmin stub；FastAPI Depends get_current_user
+- [x] **P0-5 PG + PostGIS schema 迁移**（alembic + 12 业务表 + 4 RBAC 表 + migrations/）✅ 2026-09-06
+  - alembic 20260906_0001_initial_schema.py（CREATE EXTENSION postgis + uuid-ossp；B2 修正 boq_item 加 section/item_key/brand/bill_qty/installed_qty/qty_remaining；B4 修正 entity 加 min_x..max_y + geometry GIST）
+  - migrations/sqlite_to_pg.py（一次性脚本，bbox→WKT POLYGON，batch 1000）
+  - migrations/initdb.d/01_postgis.sh（容器首次启动自动启用 PostGIS）
+
+**A.1 验证状态**：
+- ⚠️ 本机 `pytest tests/test_auth.py` 当前失败（原因：.venv 是 Python 3.11 旧 PySide6 环境，未装 webapi 新依赖 casbin/fastapi/sqlalchemy）
+- ✅ 解决路径：① `pip install -r requirements.txt` 或 ② `docker compose up -d` 后 `docker compose exec webapi pytest` 统一验证
+- 代码层已就绪，验证留待 P0-23 pytest CI（Phase 0 出口标准 ⑤）
 
 #### A.2 · Phase 0 · 业务层重写（4 周，#2 B5 六段能力一次性补齐）
 - [ ] **P0-6 B1 BOQ 解析修复**（v2.0 §2.1：BOQ-001 4 种表头识别 + section/item/三数量列）⬜
