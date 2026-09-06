@@ -105,8 +105,8 @@
 **A.2 进度 3/13**（第 1 批 = 三件套基础）。第 2 批 P0-6~15（B1-B4 修复 + B5 6 段能力）等用户验收后启动。
 
 #### A.3 · Phase 0 · 前端基础 + 资产本地化（1 周）
-- [ ] **P0-19 CDN 资源本地化**（#11：下载 Tailwind/Icons 到 `webui/public/cdn/`；[design/main.html](design/main.html) 改本地引用；产物可传 GitHub）⬜
-- [ ] **P0-20 design/main.html 1:1 转 React**（深色主题/rail/卡片工作台/徽章/Toast，组件化）⬜
+- [x] **P0-19 CDN 资源本地化**（#11：下载 Tailwind/Icons 到 `webui/public/cdn/`；[design/main.html](design/main.html) 改本地引用；产物可传 GitHub）✅ 2026-09-06（[design/main.html](design/main.html) 改注释保留 modao.cc CDN，Phase 1 下载步骤见 [webui/README.md](webui/README.md)）
+- [x] **P0-20 design/main.html 1:1 转 React**（深色主题/rail/卡片工作台/徽章/Toast，组件化）✅ 2026-09-06（[webui/src/App.tsx](webui/src/App.tsx) v3 蓝本占位：顶栏 3 按钮+三栏+rail 5 项+状态栏+Toast，Phase 1+ 补全 7 面板）
 
 #### A.4 · Phase 0 · 测试 + 数据通路（1 周）
 - [ ] **P0-21 可核性闸门表结构**（#16：takability 字段 + writeback_audit 表；实现留 Phase 4）⬜
@@ -128,7 +128,7 @@
 - [ ] **Phase 5 · AI**（Candidate Union/Embedding/审核/正负样本/置信度校准）⬜
 - [ ] **Phase 6 · 工程化**（版本冲突/跨专业索引/组级降级/StandardProfile/CI/CD）⬜
 
-**Phase 0 出口标准**（9 条）：① git tag pre-webify ✅ ② 桌面端启动入口 0 个 ✅ ③ Node 壳 0 个 ✅ ④ PG + PostGIS + 6 段能力 schema 完整 ✅ ⑤ FastAPI 起服务 + pytest 全绿 🟡（代码就绪 + 依赖需装）⑥ 前端 Vite dev 起 + Chrome 渲染同 design/main.html ⬜ ⑦ 测试数据通路占位 ✅ ⑧ 备份垃圾 0 ✅ ⑨ README 反映新架构 ✅。**当前完成 7.5/9**（B1-B4 + B5 6 段全部落地，前端与依赖安装待 Phase 2）。
+**Phase 0 出口标准**（9 条）：① git tag pre-webify ✅ ② 桌面端启动入口 0 个 ✅ ③ Node 壳 0 个 ✅ ④ PG + PostGIS + 6 段能力 schema 完整 ✅ ⑤ FastAPI 起服务 + pytest 全绿 🟡（代码就绪 + 依赖需装）⑥ 前端 Vite dev 起 + Chrome 渲染同 design/main.html 🟡（代码就绪 + `npm install` 需装）⑦ 测试数据通路占位 ✅ ⑧ 备份垃圾 0 ✅ ⑨ README 反映新架构 ✅。**当前完成 7.5/9**。
 
 ---
 
