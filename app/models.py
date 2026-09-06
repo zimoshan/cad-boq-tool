@@ -57,6 +57,14 @@ class BoqItem:
     scale_factor: float = 1.0
     mapped_count: int = 0          # 已映射实体数（运行时）
     measured_qty: float = 0.0      # 计量结果（运行时）
+    # B2 扩展（v1.0 §1 实战 BOQ-001 表头行 11 含 section + bill/inst/remaining 3 列）
+    # P0-7 提交时 boq_parser.py 用了这些字段，但 models.py 未实际加上，故运行时 TypeError
+    section: str = ""                # 分部（如 CABLE / LIGHTING）
+    item_key: str = ""              # 主键（rNNN / M-rNN / S-rN）
+    brand: str = ""                 # 品牌
+    bill_qty: float = 0.0           # 招标数量（F 列）
+    installed_qty: float = 0.0      # 已安装数量（G 列）
+    qty_remaining: float = 0.0      # 剩余数量（H 列 = bill - installed）
 
 
 @dataclass
