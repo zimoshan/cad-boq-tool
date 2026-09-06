@@ -86,6 +86,29 @@ class JobManager:
             jobs = [j for j in jobs if j.status == status]
         return sorted(jobs, key=lambda j: j.created_at, reverse=True)
 
+    def stats(self) -> dict[str, int]:
+        """按状态统计 job 数（Round 7 增强）"""
+        counts = {s.value: 0 for s in JobStatus}
+        for job in self._jobs.values():
+            counts[job.status.value] += 1
+        return counts
+
+    def cleanup(self, keep_completed: int = 50) -> int:
+        """清理旧 completed/failed/cancelled jobs，保留最近 N 个 completed
+
+        Returns: 删除的 job 数
+        """
+        to_delete: list[str] = []
+        for status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
+            jobs = [j for j in self._jobs.values() if j.status == status]
+            jobs.sort(key=lambda j: j.created_at, reverse=True)
+            keep = keep_completed if status == JobStatus.COMPLETED else 5
+            for j in jobs[keep:]:
+                to_delete.append(j.id)
+        for jid in to_delete:
+            del self._jobs[jid]
+        return len(to_delete)
+
     async def cancel(self, job_id: str) -> bool:
         job = self._jobs.get(job_id)
         if not job:

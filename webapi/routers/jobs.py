@@ -27,6 +27,24 @@ async def list_jobs(status: str | None = None) -> dict:
     return {"jobs": [j.to_dict() for j in jobs], "total": len(jobs)}
 
 
+@router.get("/stats")
+@requires("jobs:read")
+async def get_stats() -> dict:
+    """按状态统计 job 数（Round 7 增强：监控/管理面板）"""
+    return job_manager.stats()
+
+
+@router.post("/cleanup")
+@requires("jobs:write")
+async def cleanup_jobs(keep_completed: int = 50) -> dict:
+    """清理旧 completed/failed/cancelled jobs（避免内存无限增长）
+
+    keep_completed: 保留最近 N 个 completed（默认 50）
+    """
+    deleted = job_manager.cleanup(keep_completed=keep_completed)
+    return {"deleted": deleted, "remaining": len(job_manager._jobs)}
+
+
 @router.get("/{job_id}")
 @requires("jobs:read")
 async def get_job(job_id: str) -> dict:
