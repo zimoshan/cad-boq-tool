@@ -1,0 +1,88 @@
+# =============================================================================
+# cad-boq-tool Docker Compose
+# 2026-09-06 Web 化 Phase 0
+# 局域网部署：fastapi + postgis 16-3.4 + (可选) ollama
+# 启动：docker compose up -d
+# 停止：docker compose down
+# 重置数据：docker compose down -v
+# =============================================================================
+
+services:
+  # ---------- FastAPI 后端 ----------
+  webapi:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cadboq-webapi
+    restart: unless-stopped
+    ports:
+      - "8521:8521"
+    env_file:
+      - env.example                    # 默认用 env.example（生产应改为 .env）
+    environment:
+      # 容器内连 postgis 用 docker network DNS 名
+      DATABASE_URL: postgresql+asyncpg://cadboq:cadboq_dev@postgis:5432/cadboq
+      DATABASE_URL_SYNC: postgresql+psycopg://cadboq:cadboq_dev@postgis:5432/cadboq
+      # 容器内日志/缓存
+      LOG_DIR: /var/log/cad-boq
+      DRAWING_CACHE_DIR: /var/lib/cad-boq/drawing_cache
+      EMBEDDING_CACHE_DIR: /var/lib/cad-boq/embedding_cache
+      BLOCK_GEOMETRY_DIR: /var/lib/cad-boq/block_geometry
+    volumes:
+      - cadboq-data:/var/lib/cad-boq
+      - cadboq-logs:/var/log/cad-boq
+    depends_on:
+      postgis:
+        condition: service_healthy
+    networks:
+      - cadboq-net
+
+  # ---------- PostgreSQL 16 + PostGIS 3.4 ----------
+  postgis:
+    image: postgis/postgis:16-3.4
+    container_name: cadboq-postgis
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: cadboq
+      POSTGRES_USER: cadboq
+      POSTGRES_PASSWORD: cadboq_dev
+      # 时区（局域网共享默认上海）
+      TZ: Asia/Shanghai
+      # 性能：64MB shared_buffers（小数据集可调大）
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8"
+    ports:
+      # 暴露 5432 方便宿主 psql 连入排查
+      - "5432:5432"
+    volumes:
+      - postgis-data:/var/lib/postgresql/data
+      - ./migrations/initdb.d:/docker-entrypoint-initdb.d:ro    # 自动建 PostGIS 扩展
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cadboq -d cadboq"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cadboq-net
+
+  # ---------- Ollama（可选 LLM 后端；不启用时注释掉） ----------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: cadboq-ollama
+    restart: unless-stopped
+    profiles: ["with-llm"]           # 默认不启动；docker compose --profile with-llm up
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    networks:
+      - cadboq-net
+
+volumes:
+  postgis-data:
+  cadboq-data:
+  cadboq-logs:
+  ollama-data:
+
+networks:
+  cadboq-net:
+    driver: bridge

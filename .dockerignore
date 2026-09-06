@@ -1,0 +1,34 @@
+# Docker 构建排除
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.git/
+.gitignore
+.github/
+.DS_Store
+*.md.bak
+graphify-out/
+.claude/
+.vscode/
+artifacts/_legacy_ui/
+docs/_removed/
+
+# 测试与本地脚本
+tests/
+scripts/
+ui_audit.md
+verify_round3_*.png
+
+# 旧桌面端残留
+cleanup_db.py
+
+# docs/ 全部排除（运行时不需要）
+docs/
+
+# 模型与缓存（不打包进镜像）
+*.parquet
+*.npy
+*.db
