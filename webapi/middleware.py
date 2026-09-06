@@ -1,6 +1,9 @@
 """webapi 中间件（request_id + access log）"""
 from __future__ import annotations
 
+import time
+import uuid
+
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
