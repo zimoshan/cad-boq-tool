@@ -19,11 +19,12 @@ import sys
 import structlog
 
 
-def setup_logging(level: str = "INFO", json_output: bool = False) -> None:
+def setup_logging(level: str = "INFO", json_output: bool = False, log_file: str | None = None) -> None:
     """配置 structlog + stdlib logging
 
     - json_output=False: 开发期人类可读（控制台）
     - json_output=True: 生产期 JSON 输出（聚合/搜索友好）
+    - log_file: 可选，写到文件（生产期用）
     """
     log_level = getattr(logging, level.upper(), logging.INFO)
 
@@ -48,9 +49,17 @@ def setup_logging(level: str = "INFO", json_output: bool = False) -> None:
     )
 
     # 同步 stdlib logging（FastAPI/Uvicorn 用）
+    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
+    if log_file:
+        try:
+            import os
+            os.makedirs(os.path.dirname(log_file) or ".", exist_ok=True)
+            handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
+        except (OSError, PermissionError):
+            pass  # 写文件失败时只用 stdout
     logging.basicConfig(
         format="%(message)s",
-        stream=sys.stdout,
+        handlers=handlers,
         level=log_level,
     )
 
