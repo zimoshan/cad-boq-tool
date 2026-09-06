@@ -22,13 +22,14 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     # P0-35 §25：图纸元数据 5 字段
+    # 注意：sheet.status 已在 alembic 0001 line 63 创建（sa.Text server_default='ready'）
+    # 0004 只加其余 4 字段（level/zone/revision/design_stage），避免 DuplicateColumn 错误
     op.add_column("sheet", sa.Column("level", sa.String(32), server_default="", nullable=False))
     op.add_column("sheet", sa.Column("zone", sa.String(32), server_default="", nullable=False))
     op.add_column("sheet", sa.Column("revision", sa.String(16), server_default="", nullable=False))
-    op.add_column("sheet", sa.Column("status", sa.String(32), server_default="ready", nullable=False))
     op.add_column("sheet", sa.Column("design_stage", sa.String(32), server_default="", nullable=False))
-    op.create_index("idx_sheet_status", "sheet", ["status"])
     op.create_index("idx_sheet_revision", "sheet", ["revision"])
+    # 0001 line 63 已创建 sheet.status，无需再加；保留 idx_sheet_status 索引但 IF NOT EXISTS
 
     # P0-35 §26：CAD Standard Profile 路径
     op.add_column("project_config", sa.Column("cad_standard_profile_path", sa.Text, server_default="", nullable=False))
@@ -37,9 +38,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_column("project_config", "cad_standard_profile_path")
     op.drop_index("idx_sheet_revision", "sheet")
-    op.drop_index("idx_sheet_status", "sheet")
     op.drop_column("sheet", "design_stage")
-    op.drop_column("sheet", "status")
     op.drop_column("sheet", "revision")
     op.drop_column("sheet", "zone")
     op.drop_column("sheet", "level")
