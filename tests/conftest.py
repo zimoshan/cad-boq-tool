@@ -1,6 +1,11 @@
-"""pytest 全局 fixture + 环境变量注入
+"""pytest 全局 fixture + 环境变量注入 + autouse 状态隔离
 
 确保 webapi 配置在测试时不会去读真实 env.example（用空 env）
+
+autouse fixture 隔离 test 间状态：
+- webapi.config.get_settings lru_cache 清（避免 env 污染）
+- webapi.jobs.manager.job_manager 单例重置（避免 lifespan 残留）
+- Casbin enforcer 重置（避免策略缓存污染）
 """
 from __future__ import annotations
 
@@ -25,3 +30,34 @@ os.environ.setdefault("LOG_DIR", "/tmp/cad-boq-test-logs")
 os.environ.setdefault("DRAWING_CACHE_DIR", "/tmp/cad-boq-test-cache")
 os.environ.setdefault("EMBEDDING_CACHE_DIR", "/tmp/cad-boq-test-cache")
 os.environ.setdefault("BLOCK_GEOMETRY_DIR", "/tmp/cad-boq-test-cache")
+
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _reset_singletons():
+    """每个 test 前重置 webapi 单例缓存，避免 test 间状态污染
+
+    - webapi.config.get_settings lru_cache 清（env 注入用 setdefault 一次性生效）
+    - webapi.jobs.manager.job_manager 单例重置（清 jobs 数据）
+    - webapi.auth.casbin_rbac.rbac._enforcer 清（策略缓存）
+    """
+    yield
+    # 清理（在 test 后）
+    try:
+        from webapi.config import get_settings
+        get_settings.cache_clear()
+    except Exception:
+        pass
+    try:
+        from webapi.jobs.manager import job_manager
+        # 清空 jobs（不重启 worker，避免干扰后续 test）
+        job_manager._jobs.clear()
+    except Exception:
+        pass
+    try:
+        from webapi.auth.casbin_rbac import rbac
+        rbac._enforcer = None
+    except Exception:
+        pass

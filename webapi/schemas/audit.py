@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 
 class LlmRunRead(BaseModel):
+    model_config = {"protected_namespaces": ()}  # 允许 model_version 字段
     id: int
     project_id: int
     task_type: str
@@ -24,6 +25,7 @@ class LlmRunRead(BaseModel):
 
 
 class OverviewResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}  # 允许 model_* 字段（未来扩展）
     project_id: int
     boq_count: int
     mapping_count: int
