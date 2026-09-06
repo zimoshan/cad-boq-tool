@@ -73,3 +73,68 @@ async def query_viewport(
         {"sheet_id": sheet_id, "min_x": min_x, "min_y": min_y, "max_x": max_x, "max_y": max_y, "limit": limit},
     )
     return [dict(row._mapping) for row in result]
+
+
+# =============================================================================
+# v1.0 §13 4 端点支撑（metadata / layers / blocks / entities 独立查询）
+# =============================================================================
+
+
+async def get_sheet_metadata(db: AsyncSession, sheet_id: int) -> dict[str, Any] | None:
+    """v1.0 §13 GET /api/cad/metadata：图纸元数据 + drawing_type/units/level/zone"""
+    result = await db.execute(
+        text("""SELECT id, project_id, filename, src_path, dxf_path, status, scale, entity_count, layer_count,
+                       units, drawing_type, level, zone, revision, design_stage
+                FROM sheet WHERE id = :id"""),
+        {"id": sheet_id},
+    )
+    row = result.first()
+    return dict(row._mapping) if row else None
+
+
+async def get_sheet_layers(db: AsyncSession, sheet_id: int) -> list[dict[str, Any]]:
+    """v1.0 §13 GET /api/cad/layers：图层列表 + entity_count + color"""
+    result = await db.execute(
+        text("""SELECT layer, dxf_type, COUNT(*) AS entity_count
+                FROM entity WHERE sheet_id = :id GROUP BY layer, dxf_type ORDER BY entity_count DESC"""),
+        {"id": sheet_id},
+    )
+    return [dict(row._mapping) for row in result]
+
+
+async def get_sheet_blocks(db: AsyncSession, sheet_id: int) -> list[dict[str, Any]]:
+    """v1.0 §13 GET /api/cad/blocks：块列表（INSERT block_name）+ count"""
+    result = await db.execute(
+        text("""SELECT block_name, COUNT(*) AS insert_count
+                FROM entity
+                WHERE sheet_id = :id AND block_name != '' AND dxf_type='INSERT'
+                GROUP BY block_name ORDER BY insert_count DESC"""),
+        {"id": sheet_id},
+    )
+    return [dict(row._mapping) for row in result]
+
+
+async def list_entities(
+    db: AsyncSession,
+    sheet_id: int,
+    layer: str | None = None,
+    block_name: str | None = None,
+    dxf_type: str | None = None,
+    limit: int = 200,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    """v1.0 §13 GET /api/cad/entities：分页列 entity（layer/block/dxf_type 过滤）"""
+    sql = "SELECT id, handle, dxf_type, layer, block_name, length, area FROM entity WHERE sheet_id = :id"
+    args: dict[str, Any] = {"id": sheet_id}
+    if layer:
+        sql += " AND layer = :layer"
+        args["layer"] = layer
+    if block_name:
+        sql += " AND block_name = :bn"
+        args["bn"] = block_name
+    if dxf_type:
+        sql += " AND dxf_type = :dt"
+        args["dt"] = dxf_type
+    sql += f" ORDER BY id LIMIT {int(limit)} OFFSET {int(offset)}"
+    result = await db.execute(text(sql), args)
+    return [dict(row._mapping) for row in result]
