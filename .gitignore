@@ -11,3 +11,29 @@ graphify-out/
 # 2026-09-06: docs/ 不再整体 ignore（之前忽略导致 docs/_removed/ 等新子目录无法跟踪）；
 # docs/ 下基本无污染文件；未来 webui/node_modules 等新项目目录用 webui/node_modules/ 单独 ignore
 .claude/
+
+# Web 化新增（2026-09-06）
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+.pytest_cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+*.egg
+alembic/__pycache__/
+alembic/versions/__pycache__/
+migrations/__pycache__/
+migrations/initdb.d/__pycache__/
+# 未来 webui/ 目录
+webui/node_modules/
+webui/dist/
+webui/.vite/
+# 未来 webapi/ 运行时产物
+webapi/__pycache__/
+# 临时测试输出
+/tmp/cad-boq-test-*
