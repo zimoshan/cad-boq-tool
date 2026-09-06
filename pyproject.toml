@@ -1,6 +1,6 @@
 [project]
 name = "cad-boq-tool"
-version = "0.2.0.webify"  # PEP 440 兼容（连字符需改为点）
+version = "0.2.0.post1"  # PEP 440 兼容（post-release 表示 webify 重构后版本）
 description = "CAD 工程量算量工具 - Web 化迁移 Phase 0（2026-09-06）"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
