@@ -18,7 +18,7 @@ type RailKey = (typeof RAIL_TABS)[number]["key"];
 
 export default function App() {
   const [activeRail, setActiveRail] = useState<RailKey>("binding");
-  const [health, setHealth] = useState<{ status: string; version: string } | null>(null);
+  const [health, setHealth] = useState<Record<string, unknown> | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
@@ -45,7 +45,7 @@ export default function App() {
         }}
       >
         <div style={{ fontWeight: 600, color: theme.accent.primary }}>CAD·BOQ</div>
-        <div style={{ flex: 1, color: theme.text.muted }}>v{health?.version ?? "..."}</div>
+        <div style={{ flex: 1, color: theme.text.muted }}>v{String(health?.version ?? "...")}</div>
         <button onClick={() => showToast("AI 算量：待 Phase 5 实现")} style={btnStyle}>AI 算量 ▾</button>
         <button onClick={() => showToast("导出：待 Phase 4 实现")} style={btnStyle}>导出</button>
         <button onClick={() => showToast("更多菜单：待 Phase 2 补全")} style={btnStyle}>更多 ▾</button>

@@ -1,0 +1,2902 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "cad-boq-tool Web API",
+    "description": "\nCAD·BOQ 工程量算量工具 Web API（2026-09-06 Web 化 Phase 0）。\n\n## 模块\n- **health** — 健康检查 / 根端点\n- **cad** — CAD 解析 + 视口查询（PostGIS GIST 索引）\n- **binding** — 绑定候选生成（4 层）+ 确认/拒绝（跨图 SUPERSEDED）\n- **boq** — BOQ Excel 解析（B1 4 表头 + B2 6 字段）+ 回写（B5 S7 takability 6 状态）\n- **dataset** — 测试数据通路（#3 手动标记）\n- **jobs** — 进程内 JobManager + SSE 实时进度（v2.0 ADR-05）\n- **extraction** — 工程对象提取（三类 EO）\n- **takeoff** — AI 算量触发（单图/文件夹）\n- **llm** — LLM 配置中心 + 5 后端 chat 代理（#9）\n- **audit** — llm_run 审计 + 跨维统计\n\n## 认证\n默认 `AUTH_MODE=no_login`（Phase 0 阶段），所有端点放行。\n未来切 `login` 模式：JWT + Casbin 策略生效。\n\n## 性能\n- FastAPI 30 routes（单进程模块化单体）\n- JobManager 默认 2 worker（`JOB_MAX_WORKERS` env 调）\n- 视口查询毫秒级（PostGIS GIST 索引）\n",
+    "contact": {
+      "name": "cad-boq-tool",
+      "url": "https://github.com/zimoshan/cad-boq-tool"
+    },
+    "license": {
+      "name": "MIT"
+    },
+    "version": "0.2.0-webify"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Health",
+        "description": "健康检查（Docker HEALTHCHECK 用）",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Health Health Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Root",
+        "operationId": "root__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Root  Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cad/parse": {
+      "post": {
+        "tags": [
+          "cad"
+        ],
+        "summary": "Parse Cad",
+        "description": "解析 DWG/DXF（Phase 0 占位，完整实现待 A.2 第 2 批）",
+        "operationId": "parse_cad_api_cad_parse_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ParseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParseResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cad/viewport": {
+      "post": {
+        "tags": [
+          "cad"
+        ],
+        "summary": "Viewport",
+        "description": "B4 空间查询：bbox 范围内 entity 列表",
+        "operationId": "viewport_api_cad_viewport_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ViewportQuery"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Viewport Api Cad Viewport Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cad/metadata": {
+      "get": {
+        "tags": [
+          "cad"
+        ],
+        "summary": "Get Metadata",
+        "description": "v1.0 §13 GET /api/cad/metadata：图纸元数据 + drawing_type/units/level/zone/revision",
+        "operationId": "get_metadata_api_cad_metadata_get",
+        "parameters": [
+          {
+            "name": "sheet_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Sheet Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Get Metadata Api Cad Metadata Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cad/layers": {
+      "get": {
+        "tags": [
+          "cad"
+        ],
+        "summary": "Get Layers",
+        "description": "v1.0 §13 GET /api/cad/layers：图层列表 + entity_count",
+        "operationId": "get_layers_api_cad_layers_get",
+        "parameters": [
+          {
+            "name": "sheet_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Sheet Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Get Layers Api Cad Layers Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cad/blocks": {
+      "get": {
+        "tags": [
+          "cad"
+        ],
+        "summary": "Get Blocks",
+        "description": "v1.0 §13 GET /api/cad/blocks：块列表（INSERT block_name）+ insert_count",
+        "operationId": "get_blocks_api_cad_blocks_get",
+        "parameters": [
+          {
+            "name": "sheet_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Sheet Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Get Blocks Api Cad Blocks Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cad/entities": {
+      "get": {
+        "tags": [
+          "cad"
+        ],
+        "summary": "Get Entities",
+        "description": "v1.0 §13 GET /api/cad/entities：分页列 entity（layer/block/dxf_type 过滤）",
+        "operationId": "get_entities_api_cad_entities_get",
+        "parameters": [
+          {
+            "name": "sheet_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Sheet Id"
+            }
+          },
+          {
+            "name": "layer",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Layer"
+            }
+          },
+          {
+            "name": "block_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Block Name"
+            }
+          },
+          {
+            "name": "dxf_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dxf Type"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 200,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Get Entities Api Cad Entities Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/binding/generate": {
+      "post": {
+        "tags": [
+          "binding"
+        ],
+        "summary": "Generate",
+        "description": "生成绑定候选（4 层：历史→规则→语义→LLM 精排）",
+        "operationId": "generate_api_binding_generate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateCandidatesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerateCandidatesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/binding/confirm": {
+      "post": {
+        "tags": [
+          "binding"
+        ],
+        "summary": "Confirm",
+        "description": "确认候选 → 写 mapping + 跨图 SUPERSEDED（reviewer.confirm_binding）",
+        "operationId": "confirm_api_binding_confirm_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmBindingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Confirm Api Binding Confirm Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/binding/reject": {
+      "post": {
+        "tags": [
+          "binding"
+        ],
+        "summary": "Reject",
+        "description": "拒绝候选",
+        "operationId": "reject_api_binding_reject_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RejectBindingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Reject Api Binding Reject Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/boq/parse": {
+      "post": {
+        "tags": [
+          "boq"
+        ],
+        "summary": "Parse Boq",
+        "description": "解析 BOQ Excel（B1 修复：4 种表头识别，A.2 第 2 批 P0-6 落实）",
+        "operationId": "parse_boq_api_boq_parse_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ParseBoqRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParseBoqResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/boq/writeback": {
+      "post": {
+        "tags": [
+          "boq"
+        ],
+        "summary": "Writeback",
+        "description": "回写 measured_qty（B5 S7 Excel 保真回写，P0-15 落实）",
+        "operationId": "writeback_api_boq_writeback_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WritebackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WritebackResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/boq/writeback-audited": {
+      "post": {
+        "tags": [
+          "boq"
+        ],
+        "summary": "Writeback Audited",
+        "description": "v1.0 §6.4 完整 Excel 保真回写契约：\n1. 算 source_file_path 的 SHA-256\n2. 写回 measured_qty（不动 original_qty / bill_qty / formula / merge_cells）\n3. writeback_audit.file_sha256 记录 SHA-256\n4. 返回 SHA-256 + audited_rows（人工可对比校验）",
+        "operationId": "writeback_audited_api_boq_writeback_audited_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WritebackAuditedRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WritebackAuditedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/boq/export": {
+      "post": {
+        "tags": [
+          "boq"
+        ],
+        "summary": "Export Boq",
+        "description": "v1.0 §15 工程量回写：导出实测值到 Excel（overwrite_original=False 保留对照列）",
+        "operationId": "export_boq_api_boq_export_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportBoqRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportBoqResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dataset": {
+      "get": {
+        "summary": "Dataset Placeholder",
+        "description": "P0-22 测试数据通路占位（Phase 1 实现）",
+        "operationId": "dataset_placeholder_api_dataset_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Dataset Placeholder Api Dataset Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dataset/mark": {
+      "post": {
+        "tags": [
+          "dataset"
+        ],
+        "summary": "Mark",
+        "description": "手动标记一条测试数据（#3 决策）",
+        "operationId": "mark_api_dataset_mark_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Mark Api Dataset Mark Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dataset/deactivate": {
+      "post": {
+        "tags": [
+          "dataset"
+        ],
+        "summary": "Deactivate",
+        "description": "停用一条测试数据",
+        "operationId": "deactivate_api_dataset_deactivate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeactivateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Deactivate Api Dataset Deactivate Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dataset/manifests": {
+      "get": {
+        "tags": [
+          "dataset"
+        ],
+        "summary": "List Manifests",
+        "description": "v1.0 §8 列出所有 dataset 目录",
+        "operationId": "list_manifests_api_dataset_manifests_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response List Manifests Api Dataset Manifests Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dataset/manifest": {
+      "get": {
+        "tags": [
+          "dataset"
+        ],
+        "summary": "Get Manifest",
+        "description": "v1.0 §8 读指定 dataset 的 manifest.json",
+        "operationId": "get_manifest_api_dataset_manifest_get",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "lbh",
+              "title": "Dataset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Get Manifest Api Dataset Manifest Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "dataset"
+        ],
+        "summary": "Update Manifest",
+        "description": "v1.0 §8 更新 manifest 单字段",
+        "operationId": "update_manifest_api_dataset_manifest_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManifestUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Update Manifest Api Dataset Manifest Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "List Jobs",
+        "description": "列出 Jobs（按状态过滤）",
+        "operationId": "list_jobs_api_jobs_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response List Jobs Api Jobs Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{job_id}": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Get Job",
+        "operationId": "get_job_api_jobs__job_id__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Get Job Api Jobs  Job Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/submit": {
+      "post": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Submit Job",
+        "description": "提交一个 Job（Phase 2 占位：func_name 路由待 Phase 2 完整实现）",
+        "operationId": "submit_job_api_jobs_submit_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobSubmitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Submit Job Api Jobs Submit Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{job_id}/cancel": {
+      "post": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Cancel Job",
+        "operationId": "cancel_job_api_jobs__job_id__cancel_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Cancel Job Api Jobs  Job Id  Cancel Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{job_id}/stream": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Stream Job",
+        "description": "SSE 端点：实时推送 job 进度 + 终态",
+        "operationId": "stream_job_api_jobs__job_id__stream_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/extraction/run": {
+      "post": {
+        "tags": [
+          "extraction"
+        ],
+        "summary": "Run Extraction",
+        "description": "触发工程对象提取（设备/线性/面积 三类）",
+        "operationId": "run_extraction_api_extraction_run_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExtractionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtractionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/extraction/eos": {
+      "get": {
+        "tags": [
+          "extraction"
+        ],
+        "summary": "List Eos",
+        "description": "列出工程对象（可按 sheet_id / object_type 过滤）",
+        "operationId": "list_eos_api_extraction_eos_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "sheet_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sheet Id"
+            }
+          },
+          {
+            "name": "object_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Object Type"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 200,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EngineeringObjectRead"
+                  },
+                  "title": "Response List Eos Api Extraction Eos Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/takeoff/run": {
+      "post": {
+        "tags": [
+          "takeoff"
+        ],
+        "summary": "Run Takeoff",
+        "description": "触发 AI 算量（单图或文件夹维度）",
+        "operationId": "run_takeoff_api_takeoff_run_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TakeoffRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TakeoffResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/llm/settings": {
+      "get": {
+        "tags": [
+          "llm"
+        ],
+        "summary": "Get Settings",
+        "description": "读 llm_settings 单例表（#9 后端转发 5 后端配置）",
+        "operationId": "get_settings_api_llm_settings_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmSettingsRead"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "llm"
+        ],
+        "summary": "Update Settings",
+        "description": "部分字段更新 llm_settings",
+        "operationId": "update_settings_api_llm_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LlmSettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmSettingsRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/llm/chat": {
+      "post": {
+        "tags": [
+          "llm"
+        ],
+        "summary": "Chat",
+        "description": "通用 chat 端点（#9 后端转发）",
+        "operationId": "chat_api_llm_chat_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/audit/llm-runs": {
+      "get": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "List Llm Runs",
+        "description": "读 llm_run 审计表（按 project_id + task_type 过滤）",
+        "operationId": "list_llm_runs_api_audit_llm_runs_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "task_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Task Type"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response List Llm Runs Api Audit Llm Runs Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/audit/overview": {
+      "get": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "Get Overview",
+        "description": "项目总览（boq_count / eo_breakdown / writeback_by_takability / llm_runs_by_task）",
+        "operationId": "get_overview_api_audit_overview_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverviewResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/audit/precheck": {
+      "get": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "Get Precheck",
+        "description": "v1.0 §29 预检页面 6 维度（drawing_type / takability / coverage / granularity / version / provisional）",
+        "operationId": "get_precheck_api_audit_precheck_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Get Precheck Api Audit Precheck Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cad-standard/rules": {
+      "get": {
+        "tags": [
+          "cad-standard"
+        ],
+        "summary": "List Rules",
+        "description": "v1.0 §26 列出 5 个规则文件（layer_rules / block_rules / attribute_rules / drawing_type_rules / specification_rules）",
+        "operationId": "list_rules_api_cad_standard_rules_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response List Rules Api Cad Standard Rules Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cad-standard/rules/{name}": {
+      "get": {
+        "tags": [
+          "cad-standard"
+        ],
+        "summary": "Get Rule",
+        "description": "v1.0 §26 读单个规则 JSON",
+        "operationId": "get_rule_api_cad_standard_rules__name__get",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Get Rule Api Cad Standard Rules  Name  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "cad-standard"
+        ],
+        "summary": "Update Rule",
+        "description": "v1.0 §26 更新规则 JSON（按 schema 校验）",
+        "operationId": "update_rule_api_cad_standard_rules__name__put",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuleUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Update Rule Api Cad Standard Rules  Name  Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ChatRequest": {
+        "properties": {
+          "system": {
+            "type": "string",
+            "title": "System",
+            "default": ""
+          },
+          "user": {
+            "type": "string",
+            "title": "User"
+          },
+          "images": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Images",
+            "description": "base64 编码图片列表（Phase 2 占位）"
+          },
+          "task_type": {
+            "type": "string",
+            "title": "Task Type",
+            "default": "chat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user"
+        ],
+        "title": "ChatRequest"
+      },
+      "ChatResponse": {
+        "properties": {
+          "task_type": {
+            "type": "string",
+            "title": "Task Type"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "output": {
+            "title": "Output"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_type",
+          "model",
+          "output"
+        ],
+        "title": "ChatResponse"
+      },
+      "ConfirmBindingRequest": {
+        "properties": {
+          "candidate_id": {
+            "type": "integer",
+            "title": "Candidate Id"
+          },
+          "by_user": {
+            "type": "string",
+            "title": "By User",
+            "default": "sysadmin"
+          }
+        },
+        "type": "object",
+        "required": [
+          "candidate_id"
+        ],
+        "title": "ConfirmBindingRequest"
+      },
+      "DeactivateRequest": {
+        "properties": {
+          "entry_id": {
+            "type": "integer",
+            "title": "Entry Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "entry_id"
+        ],
+        "title": "DeactivateRequest"
+      },
+      "EngineeringObjectRead": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "project_id": {
+            "type": "integer",
+            "title": "Project Id"
+          },
+          "sheet_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sheet Id"
+          },
+          "object_type": {
+            "type": "string",
+            "title": "Object Type",
+            "default": ""
+          },
+          "discipline": {
+            "type": "string",
+            "title": "Discipline",
+            "default": ""
+          },
+          "system": {
+            "type": "string",
+            "title": "System",
+            "default": ""
+          },
+          "block_name": {
+            "type": "string",
+            "title": "Block Name",
+            "default": ""
+          },
+          "layer_name": {
+            "type": "string",
+            "title": "Layer Name",
+            "default": ""
+          },
+          "specification": {
+            "type": "string",
+            "title": "Specification",
+            "default": ""
+          },
+          "unit": {
+            "type": "string",
+            "title": "Unit",
+            "default": ""
+          },
+          "quantity_rule": {
+            "type": "string",
+            "title": "Quantity Rule",
+            "default": "count"
+          },
+          "confidence": {
+            "type": "number",
+            "title": "Confidence",
+            "default": 0.0
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "project_id"
+        ],
+        "title": "EngineeringObjectRead"
+      },
+      "ExportBoqRequest": {
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "title": "Project Id"
+          },
+          "output_path": {
+            "type": "string",
+            "title": "Output Path",
+            "description": "输出 xlsx 绝对路径"
+          },
+          "overwrite_original": {
+            "type": "boolean",
+            "title": "Overwrite Original",
+            "description": "是否覆盖原 BOQ 数量列（默认保留对照）",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id",
+          "output_path"
+        ],
+        "title": "ExportBoqRequest",
+        "description": "v1.0 §15 工程量回写：导出实测值到 Excel"
+      },
+      "ExportBoqResponse": {
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "title": "Project Id"
+          },
+          "output_path": {
+            "type": "string",
+            "title": "Output Path"
+          },
+          "written_rows": {
+            "type": "integer",
+            "title": "Written Rows"
+          },
+          "skipped_rows": {
+            "type": "integer",
+            "title": "Skipped Rows",
+            "default": 0
+          },
+          "by_takability": {
+            "type": "object",
+            "title": "By Takability"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id",
+          "output_path",
+          "written_rows"
+        ],
+        "title": "ExportBoqResponse"
+      },
+      "ExtractionRequest": {
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "title": "Project Id"
+          },
+          "sheet_id": {
+            "type": "integer",
+            "title": "Sheet Id"
+          },
+          "layer_rules": {
+            "type": "object",
+            "title": "Layer Rules"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id",
+          "sheet_id"
+        ],
+        "title": "ExtractionRequest"
+      },
+      "ExtractionResponse": {
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "title": "Project Id"
+          },
+          "sheet_id": {
+            "type": "integer",
+            "title": "Sheet Id"
+          },
+          "created": {
+            "type": "integer",
+            "title": "Created"
+          },
+          "stats": {
+            "type": "object",
+            "title": "Stats"
+          },
+          "object_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Object Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id",
+          "sheet_id",
+          "created"
+        ],
+        "title": "ExtractionResponse"
+      },
+      "GenerateCandidatesRequest": {
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "title": "Project Id"
+          },
+          "sheet_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sheet Id"
+          },
+          "use_llm": {
+            "type": "boolean",
+            "title": "Use Llm",
+            "default": true
+          },
+          "top_n": {
+            "type": "integer",
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Top N",
+            "default": 5
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id"
+        ],
+        "title": "GenerateCandidatesRequest"
+      },
+      "GenerateCandidatesResponse": {
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "title": "Project Id"
+          },
+          "sheet_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sheet Id"
+          },
+          "use_llm": {
+            "type": "boolean",
+            "title": "Use Llm"
+          },
+          "candidates_created": {
+            "type": "integer",
+            "title": "Candidates Created"
+          },
+          "stats": {
+            "type": "object",
+            "title": "Stats"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id",
+          "use_llm",
+          "candidates_created"
+        ],
+        "title": "GenerateCandidatesResponse"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "JobSubmitRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "func_name": {
+            "type": "string",
+            "title": "Func Name",
+            "default": ""
+          },
+          "payload": {
+            "type": "object",
+            "title": "Payload",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "JobSubmitRequest"
+      },
+      "LlmSettingsRead": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id",
+            "default": 1
+          },
+          "active_backend": {
+            "type": "string",
+            "title": "Active Backend",
+            "default": "ollama"
+          },
+          "ollama_host": {
+            "type": "string",
+            "title": "Ollama Host",
+            "default": "http://127.0.0.1:11434"
+          },
+          "ollama_model": {
+            "type": "string",
+            "title": "Ollama Model",
+            "default": "qwen2.5:7b"
+          },
+          "dashscope_api_key": {
+            "type": "string",
+            "title": "Dashscope Api Key",
+            "default": ""
+          },
+          "dashscope_model": {
+            "type": "string",
+            "title": "Dashscope Model",
+            "default": "qwen-vl-max-0809"
+          },
+          "openai_api_key": {
+            "type": "string",
+            "title": "Openai Api Key",
+            "default": ""
+          },
+          "openai_model": {
+            "type": "string",
+            "title": "Openai Model",
+            "default": "gpt-4o-mini"
+          },
+          "deepseek_api_key": {
+            "type": "string",
+            "title": "Deepseek Api Key",
+            "default": ""
+          },
+          "deepseek_model": {
+            "type": "string",
+            "title": "Deepseek Model",
+            "default": "deepseek-chat"
+          },
+          "custom_base_url": {
+            "type": "string",
+            "title": "Custom Base Url",
+            "default": ""
+          },
+          "custom_api_key": {
+            "type": "string",
+            "title": "Custom Api Key",
+            "default": ""
+          },
+          "custom_model": {
+            "type": "string",
+            "title": "Custom Model",
+            "default": ""
+          },
+          "custom_embedding_model": {
+            "type": "string",
+            "title": "Custom Embedding Model",
+            "default": ""
+          },
+          "fallback_enabled": {
+            "type": "integer",
+            "title": "Fallback Enabled",
+            "default": 0
+          },
+          "fallback_backend": {
+            "type": "string",
+            "title": "Fallback Backend",
+            "default": ""
+          },
+          "quality_threshold": {
+            "type": "number",
+            "title": "Quality Threshold",
+            "default": 0.7
+          },
+          "temperature": {
+            "type": "number",
+            "title": "Temperature",
+            "default": 0.1
+          },
+          "timeout": {
+            "type": "integer",
+            "title": "Timeout",
+            "default": 120
+          },
+          "max_tokens": {
+            "type": "integer",
+            "title": "Max Tokens",
+            "default": 4000
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "LlmSettingsRead",
+        "description": "llm_settings 单例表读取（PG/PG-asyncio 同步）"
+      },
+      "LlmSettingsUpdate": {
+        "properties": {
+          "active_backend": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Backend"
+          },
+          "ollama_host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ollama Host"
+          },
+          "ollama_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ollama Model"
+          },
+          "dashscope_api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dashscope Api Key"
+          },
+          "dashscope_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dashscope Model"
+          },
+          "openai_api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Openai Api Key"
+          },
+          "openai_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Openai Model"
+          },
+          "deepseek_api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deepseek Api Key"
+          },
+          "deepseek_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deepseek Model"
+          },
+          "custom_base_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Base Url"
+          },
+          "custom_api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Api Key"
+          },
+          "custom_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Model"
+          },
+          "custom_embedding_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Embedding Model"
+          },
+          "fallback_enabled": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Enabled"
+          },
+          "fallback_backend": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Backend"
+          },
+          "quality_threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quality Threshold"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature"
+          },
+          "timeout": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout"
+          },
+          "max_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Tokens"
+          }
+        },
+        "type": "object",
+        "title": "LlmSettingsUpdate",
+        "description": "部分字段更新"
+      },
+      "ManifestUpdateRequest": {
+        "properties": {
+          "dataset_id": {
+            "type": "string",
+            "title": "Dataset Id",
+            "default": "lbh"
+          },
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "value": {
+            "type": "string",
+            "title": "Value"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "value"
+        ],
+        "title": "ManifestUpdateRequest"
+      },
+      "MarkRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "project_id": {
+            "type": "integer",
+            "title": "Project Id"
+          },
+          "file_path": {
+            "type": "string",
+            "title": "File Path"
+          },
+          "data_type": {
+            "type": "string",
+            "title": "Data Type"
+          },
+          "note": {
+            "type": "string",
+            "title": "Note",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "project_id",
+          "file_path",
+          "data_type"
+        ],
+        "title": "MarkRequest"
+      },
+      "OverviewResponse": {
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "title": "Project Id"
+          },
+          "boq_count": {
+            "type": "integer",
+            "title": "Boq Count"
+          },
+          "mapping_count": {
+            "type": "integer",
+            "title": "Mapping Count"
+          },
+          "eo_breakdown": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Eo Breakdown"
+          },
+          "writeback_by_takability": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Writeback By Takability"
+          },
+          "llm_runs_by_task": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Llm Runs By Task"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id",
+          "boq_count",
+          "mapping_count",
+          "eo_breakdown",
+          "writeback_by_takability",
+          "llm_runs_by_task"
+        ],
+        "title": "OverviewResponse"
+      },
+      "ParseBoqRequest": {
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "title": "Project Id"
+          },
+          "file_path": {
+            "type": "string",
+            "title": "File Path",
+            "description": "xlsx/xls 绝对路径"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id",
+          "file_path"
+        ],
+        "title": "ParseBoqRequest"
+      },
+      "ParseBoqResponse": {
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "title": "Project Id"
+          },
+          "file_path": {
+            "type": "string",
+            "title": "File Path"
+          },
+          "item_count": {
+            "type": "integer",
+            "title": "Item Count"
+          },
+          "meta": {
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id",
+          "file_path",
+          "item_count"
+        ],
+        "title": "ParseBoqResponse"
+      },
+      "ParseRequest": {
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "title": "Project Id"
+          },
+          "file_path": {
+            "type": "string",
+            "title": "File Path",
+            "description": "DWG/DXF 绝对路径（先上传到 DRAWING_CACHE_DIR）"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id",
+          "file_path"
+        ],
+        "title": "ParseRequest"
+      },
+      "ParseResponse": {
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "title": "Project Id"
+          },
+          "file_path": {
+            "type": "string",
+            "title": "File Path"
+          },
+          "entity_count": {
+            "type": "integer",
+            "title": "Entity Count"
+          },
+          "layer_count": {
+            "type": "integer",
+            "title": "Layer Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id",
+          "file_path",
+          "entity_count",
+          "layer_count"
+        ],
+        "title": "ParseResponse"
+      },
+      "RejectBindingRequest": {
+        "properties": {
+          "candidate_id": {
+            "type": "integer",
+            "title": "Candidate Id"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason",
+            "default": ""
+          },
+          "by_user": {
+            "type": "string",
+            "title": "By User",
+            "default": "sysadmin"
+          }
+        },
+        "type": "object",
+        "required": [
+          "candidate_id"
+        ],
+        "title": "RejectBindingRequest"
+      },
+      "RuleUpdateRequest": {
+        "properties": {
+          "content": {
+            "type": "object",
+            "title": "Content"
+          }
+        },
+        "type": "object",
+        "required": [
+          "content"
+        ],
+        "title": "RuleUpdateRequest"
+      },
+      "TakeoffRequest": {
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "title": "Project Id"
+          },
+          "sheet_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sheet Id"
+          },
+          "folder_path": {
+            "type": "string",
+            "title": "Folder Path",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id"
+        ],
+        "title": "TakeoffRequest"
+      },
+      "TakeoffResponse": {
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "title": "Project Id"
+          },
+          "sheet_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sheet Id"
+          },
+          "folder_path": {
+            "type": "string",
+            "title": "Folder Path",
+            "default": ""
+          },
+          "result": {
+            "type": "object",
+            "title": "Result"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id"
+        ],
+        "title": "TakeoffResponse"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "ViewportQuery": {
+        "properties": {
+          "sheet_id": {
+            "type": "integer",
+            "title": "Sheet Id"
+          },
+          "min_x": {
+            "type": "number",
+            "title": "Min X"
+          },
+          "min_y": {
+            "type": "number",
+            "title": "Min Y"
+          },
+          "max_x": {
+            "type": "number",
+            "title": "Max X"
+          },
+          "max_y": {
+            "type": "number",
+            "title": "Max Y"
+          },
+          "limit": {
+            "type": "integer",
+            "maximum": 50000.0,
+            "title": "Limit",
+            "default": 10000
+          }
+        },
+        "type": "object",
+        "required": [
+          "sheet_id",
+          "min_x",
+          "min_y",
+          "max_x",
+          "max_y"
+        ],
+        "title": "ViewportQuery",
+        "description": "B4 空间查询请求"
+      },
+      "WritebackAuditedRequest": {
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "title": "Project Id"
+          },
+          "project_scale": {
+            "type": "number",
+            "title": "Project Scale",
+            "default": 1.0
+          },
+          "source_file_path": {
+            "type": "string",
+            "title": "Source File Path",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id"
+        ],
+        "title": "WritebackAuditedRequest",
+        "description": "回写 + 源文件 SHA-256 审计（v1.0 §6.4 防 tamper）"
+      },
+      "WritebackAuditedResponse": {
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "title": "Project Id"
+          },
+          "written": {
+            "type": "integer",
+            "title": "Written"
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed",
+            "default": 0
+          },
+          "file_sha256": {
+            "type": "string",
+            "title": "File Sha256",
+            "default": ""
+          },
+          "audited_rows": {
+            "type": "integer",
+            "title": "Audited Rows",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id",
+          "written"
+        ],
+        "title": "WritebackAuditedResponse"
+      },
+      "WritebackRequest": {
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "title": "Project Id"
+          },
+          "project_scale": {
+            "type": "number",
+            "title": "Project Scale",
+            "default": 1.0
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id"
+        ],
+        "title": "WritebackRequest"
+      },
+      "WritebackResponse": {
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "title": "Project Id"
+          },
+          "written": {
+            "type": "integer",
+            "title": "Written"
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id",
+          "written"
+        ],
+        "title": "WritebackResponse"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "health",
+      "description": "健康检查 + 根端点"
+    },
+    {
+      "name": "cad",
+      "description": "CAD 解析 + 视口查询"
+    },
+    {
+      "name": "binding",
+      "description": "绑定候选生成 / 确认 / 拒绝"
+    },
+    {
+      "name": "boq",
+      "description": "BOQ Excel 解析 + 回写"
+    },
+    {
+      "name": "dataset",
+      "description": "测试数据通路（手动标记）"
+    },
+    {
+      "name": "jobs",
+      "description": "异步任务 + SSE 实时进度"
+    },
+    {
+      "name": "extraction",
+      "description": "工程对象提取"
+    },
+    {
+      "name": "takeoff",
+      "description": "AI 算量触发"
+    },
+    {
+      "name": "llm",
+      "description": "LLM 配置 + 5 后端 chat"
+    },
+    {
+      "name": "audit",
+      "description": "审计 + 跨维统计"
+    }
+  ]
+}
