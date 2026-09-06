@@ -8,5 +8,6 @@ __pycache__/
 .ipynb_checkpoints/
 .vscode/
 graphify-out/
-docs/
+# 2026-09-06: docs/ 不再整体 ignore（之前忽略导致 docs/_removed/ 等新子目录无法跟踪）；
+# docs/ 下基本无污染文件；未来 webui/node_modules 等新项目目录用 webui/node_modules/ 单独 ignore
 .claude/

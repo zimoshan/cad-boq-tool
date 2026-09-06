@@ -47,7 +47,79 @@
 
 ## §1 当前待办
 
-> 主线来源：[REVIEW_TECH_ROUTE_2026-09-06](docs/REVIEW_TECH_ROUTE_2026-09-06.md) 优化建议 + 方法论遗留项。
+> **主线 A**：Web 化迁移（方案 B 务实版，2026-09-06 启动，#19 选 A：保留算法实现重写集成层）
+> **主线 B**：业务优化（[REVIEW_TECH_ROUTE_2026-09-06](docs/REVIEW_TECH_ROUTE_2026-09-06.md) + 方法论遗留项；Web 化 Phase 0~4 期间暂不投入，Phase 5 后回归对位）
+> **主线 C**：验证项
+
+---
+
+### A · Web 化迁移（最高优先级主线）
+
+> 18 项决策见 §6 决策记录；Phase 0 = 28 项（细分 35），总工期 ≈ 20-25 周。Phase 0 启动 2026-09-06。
+> 设计基线：[CAD_BOQ_Web化_架构设计_v2.0](docs/CAD_BOQ_Web化_架构设计_v2.0.md) + 18 决策修订（方案 B 务实版：FastAPI 单进程模块化单体 + React + Canvas 2D + PG/PostGIS + RuoYi 风格 RBAC + Linux 部署优先，桌面端 2026-09-06 直接废弃）。
+
+#### A.0 · Phase 0 · 清理与归档（先做，1 周）
+- [x] **P0-0.1 git tag `pre-webify` 完整快照** ✅ 2026-09-06（HEAD = 837441f；`git reset --hard pre-webify` 随时回退）
+- [ ] **P0-0.2 删除 Node 壳** [src/](src/) + [bin/](bin/) + [package.json](package.json)（5 文件，#10 已明确引用）⬜
+- [ ] **P0-0.3 删除桌面端入口** [main.py](main.py) + 整个 [app/ui/](app/ui/) 21 文件（#15）⬜
+- [ ] **P0-0.4 移动 UI 相关归档** 到 [docs/_removed/](docs/_removed/)：UI_ARCHITECTURE / UI_AUDIT / UI_REDESIGN / UI_REFACTOR_REPORT / COMPLETION_CHECKLIST / UI_UX_OPTIMIZATION_DELIVERY / UI_AUDIT_REPORT_2026-08-28 / BINDING_LEGEND_RECTIFICATION_2026-08-28 / PROJECT_MANAGEMENT_OPTIMIZATION 共 9 文件 ⬜
+- [ ] **P0-0.5 移动旧 GUI 截图** 到 [artifacts/_legacy_ui/](artifacts/)：3 张 verify_round3_*.png + [ui_audit.md](ui_audit.md) ⬜
+- [ ] **P0-0.6 备份垃圾清理 ~4.7 GB**（`~/.cad-boq-tool/` 下多个 .bak_2026* / .bak-prellm / .fresh / .rebuilt）⬜
+- [ ] **P0-0.7 README 重写**（指向 webapi/webui 启动步骤）⬜
+
+#### A.1 · Phase 0 · 基础设施（2 周）
+- [ ] **P0-1 requirements.txt 锁定**（PySide6 移除；增 FastAPI/uvicorn/SQLAlchemy[asyncio]/asyncpg/alembic/shapely/pydantic/Casbin/pytest-playwright）⬜
+- [ ] **P0-2 .env.example 模板**（ODA/PG DSN/LLM Key/LOG_DIR env 化）⬜
+- [ ] **P0-3 Docker Compose**（fastapi + postgis + 可选 ollama + volumes）⬜
+- [ ] **P0-4 RuoYi 风格 RBAC 骨架**（users/roles/menus/dicts 4 表 + user_role 关联 + `auth/decorators.requires("perm")` 抽象；当前 `lambda u: True` 免登录，#5）⬜
+- [ ] **P0-5 PG + PostGIS schema 迁移**（Alembic 初始化 + 旧 SQLite 导出/导入脚本）⬜
+
+#### A.2 · Phase 0 · 业务层重写（4 周，#2 B5 六段能力一次性补齐）
+- [ ] **P0-6 B1 BOQ 解析修复**（v2.0 §2.1：BOQ-001 4 种表头识别 + section/item/三数量列）⬜
+- [ ] **P0-7 B2 BoqItem 模型扩展**（v2.0 §2.2：section + bill_qty/installed_qty/qty_remaining + Item 主键）⬜
+- [ ] **P0-8 B3 块几何外置**（v2.0 §2.3：`sheet.blocks_json` 34MB → `block_geometry/<sha256>.parquet`）⬜
+- [ ] **P0-9 B4 空间列 + 视口查询**（v2.0 §2.4：`entity` 加 min_x/max_x/min_y/max_y + PostGIS geometry + `/api/cad/viewport?bbox=`）⬜
+- [ ] **P0-10 B5 S1 DWG 无头转换**（[dwg.py](app/cad/dwg.py) 加 accoreconsole 路径 + Linux ODA 二进制）⬜
+- [ ] **P0-11 B5 S3 单位标定**（drawing.units 字段 + INSUNITS 自动检测）⬜
+- [ ] **P0-12 B5 S4 归一化 + 黑名单**（型号词表 + DETAIL/LEGEND 层黑名单 v2.0 §5.1）⬜
+- [ ] **P0-13 B5 S5 跨图去重并集**（`_tray_pts.json` 思路 → `cross_sheet_dedup` 表 + 算法）⬜
+- [ ] **P0-14 B5 S6 Item 映射**（BOQ item ↔ EO 关联 v2.0 §5.3）⬜
+- [ ] **P0-15 B5 S7 可核性 + Excel 保真回写**（`takability` 6 状态 + `writeback_audit` 表，#16 Phase 1 落地表结构）⬜
+- [ ] **P0-16 业务函数重写为 Service 层**（#19 选 A：算法实现保留，重写入口；新建 `webapi/services/{cad,extraction,binding,takeoff,boq,llm,audit}.py`）⬜
+- [ ] **P0-17 Pydantic schema 全套**（请求/响应模型 v2.0 §6.6）⬜
+- [ ] **P0-18 API 契约 OpenAPI**（自动生成 `/docs`）⬜
+
+#### A.3 · Phase 0 · 前端基础 + 资产本地化（1 周）
+- [ ] **P0-19 CDN 资源本地化**（#11：下载 Tailwind/Icons 到 `webui/public/cdn/`；[design/main.html](design/main.html) 改本地引用；产物可传 GitHub）⬜
+- [ ] **P0-20 design/main.html 1:1 转 React**（深色主题/rail/卡片工作台/徽章/Toast，组件化）⬜
+
+#### A.4 · Phase 0 · 测试 + 数据通路（1 周）
+- [ ] **P0-21 可核性闸门表结构**（#16：takability 字段 + writeback_audit 表；实现留 Phase 4）⬜
+- [ ] **P0-22 Dataset 通路占位**（#3：`/api/dataset/*` 路由占位 + 你手动标记测试数据机制，README 写明）⬜
+- [ ] **P0-23 pytest CI**（[.github/workflows/test.yml](.github/workflows/) + 桌面 vs Web 一致性测试 = 11 现有 + 新增 API/renderer/regression）⬜
+- [ ] **P0-24 dataviz skill 引入**（#17：跨专业总览页 + 报告页用 dataviz）⬜
+
+#### A.5 · Phase 0 · 文档（同步执行）
+- [x] **P0-25 BACKLOG §1 登记 Phase 0 全部 28 项 + 18 决策** ✅ 2026-09-06
+- [ ] **P0-26 WEB_MIGRATION_PLAN.md 重写**（按 v2.0 9 阶段 + 18 决策；替代当前散落方案文档）⬜
+- [ ] **P0-27 DESKTOP_TO_WEB_MAPPING.md**（标注删除项 + 重写项 + 零重写项三段式）⬜
+- [ ] **P0-28 CHANGELOG.md 新建**（本次架构切换专条）⬜
+
+#### A.6 ~ A.10 · Phase 1~6（占位，Phase 0 完成后细化）
+- [ ] **Phase 1 · 数据资产闸门**（#16 可核性表实现 + #3 测试数据通路 + ADR-06 Dataset 整理）⬜
+- [ ] **Phase 2 · FastAPI 后端 + JobManager + SSE + RBAC + 全部 Service 路由** ⬜
+- [ ] **Phase 3 · React + Canvas 2D 渲染器**（1.2 万小图先验 → 7.9 万，最大风险项）⬜
+- [ ] **Phase 4 · 业务闭环联调 + Excel 保真回写契约**（v2.0 §6.4）⬜
+- [ ] **Phase 5 · AI**（Candidate Union/Embedding/审核/正负样本/置信度校准）⬜
+- [ ] **Phase 6 · 工程化**（版本冲突/跨专业索引/组级降级/StandardProfile/CI/CD）⬜
+
+**Phase 0 出口标准**：① git tag pre-webify ✅ ② 桌面端启动入口 0 个 ③ Node 壳 0 个 ④ PG + PostGIS + 6 段能力 schema 完整 ⑤ FastAPI 起服务 + pytest 全绿 ⑥ 前端 Vite dev 起 + Chrome 渲染同 design/main.html ⑦ 测试数据通路占位完成 ⑧ 备份垃圾 0 ⑨ README 反映新架构。
+
+---
+
+### B · 业务优化（次要支线，Web 化 Phase 5 后回归对位）
+
+> 主线来源：[REVIEW_TECH_ROUTE_2026-09-06](docs/REVIEW_TECH_ROUTE_2026-09-06.md) 优化建议 + 方法论遗留项。Web 化 Phase 0~4 期间暂不投入，Phase 5 起评估对位（#1 方案 B 重写集成层后会自然吸收部分 P0/P1 项）。
 
 ### P0
 
@@ -111,10 +183,12 @@
 
 ## §2 暂缓（⏸）
 
-- **Web 化改造（FastAPI + Canvas2D）** ⏸ 2026-08-28
-  - 方案已定稿：[CAD_BOQ_Web化_架构设计_v2.0](docs/CAD_BOQ_Web化_架构设计_v2.0.md)、[数据资产与实施 v1.0](docs/CAD_BOQ_Web化改造_数据资产与实施方案_v1.0.md)、[WEB_PLATFORM_ARCHITECTURE_2026-08-28](docs/WEB_PLATFORM_ARCHITECTURE_2026-08-28.md)。
-  - 暂缓原因：桌面端优先，用户决策暂缓实施。
-  - 恢复条件：桌面端稳定后（或用户重新要求）。恢复时先迁移业务层，再 Web 壳。
+- **Web 化改造（FastAPI + Canvas2D）** 🚧 2026-09-06 启动（详见 §1.A 28 项 Phase 0）
+  - 方案 B 务实版：FastAPI 单进程模块化单体 + React + Canvas 2D + PG/PostGIS + RuoYi 风格 RBAC + Linux 部署优先
+  - 桌面端 2026-09-06 决策**直接废弃**（#15）
+  - 业务层保留算法实现，重写集成层（#19 选 A）
+  - Phase 0 = 清理 7 项 + 基础设施 5 项 + 业务层重写 13 项 + 前端 2 项 + 测试 4 项 + 文档 4 项 = 35 项（细分）
+  - 总工期 ≈ 20-25 周；18 项决策见 §6
 
 - **大图按视口/图层惰性实例化** ⏸（原 P1-3 可选项）
   - 现状：当前合并 LOD + BspTreeIndex 已覆盖大头，此项为可选深化。
@@ -178,3 +252,48 @@
 | COMPLETION_CHECKLIST.md | docs/archive/ | 保留在 archive | 已完成项归 §3.5，Ctrl+K 转 §1 P3-3 |
 | REVIEW_TECH_ROUTE_2026-09-06 | docs/ | 保留（决策依据） | §1 来源文档，无独立清单 |
 | REVIEW_OPEN_SOURCE_ECOSYSTEM_2026-09-06 | docs/ | 保留（选型参考） | 合规红线：ConstructDrawingAI 只读、数据版权、幻觉防护 |
+| 驱动 Claude Code Web 化 Prompt | docs/ | 保留（执行输入） | 19 节报告 + 18 决策基线 |
+| 估算系统技术架构与实现说明 | docs/ | 保留（架构参考） | Web 化重写时校对 |
+| BACKLOG v2（自 v2 始） | docs/BACKLOG.md | 唯一待办入口 | 含 §6 决策记录 |
+
+---
+
+## §6 决策记录（Web 化迁移，2026-09-06）
+
+> 用户 18 项决策的固化记录。每项含决策内容、理由、影响范围。所有 Phase 0+ 任务都基于此记录。
+
+| # | 决策项 | 决策 | 理由/影响 |
+|---|------|------|-----------|
+| 1 | 架构方案 | **方案 B** 重写所有相关代码 | 与桌面端共存方案（A）废弃；业务层函数按 #19 处理 |
+| 2 | B5 能力补齐 | **一次性全部补齐**（不进 Phase 4） | Phase 0 工作量翻倍（4 周→）；有实战脚本可照搬 |
+| 3 | Dataset/DWG | **先不入库**，开发完用户手动标记作为测试数据 | 客户资产归属；Sprint 1 从"重解析"降级为"整理 + 补漏" |
+| 4 | OS 部署 | **开发 Windows / 生产推荐 Linux** | 业务层零 OS 依赖；Linux 省 30% 内存 + 7×24 systemd；CAD 解析无影响 |
+| 5 | 鉴权 | **单用户免登录 + RuoYi 风格 RBAC 预留** | Python 等价：FastAPI + Casbin + 4 表 + `@requires("perm")` 装饰器 |
+| 6 | 部署形态 | **局域网**（单进程 FastAPI + PG/PostGIS） | 文件存储本地；多 worker 切 PG 后再加；保留 SQLite 备选 |
+| 7 | 浏览器兼容 | **仅 Chrome** | React + Vite + 任意 UI 库；CDN 资源本地化；无 polyfill 负担 |
+| 8 | 重新推荐 | 已输出 v3 方案（**务实版**：模块化单体非微服务） | 与"Windows 单机 + 局域网"实际部署场景匹配 |
+| 9 | LLM 调用 | **后端转发**（5 后端统一抽象） | 浏览器直连有 CORS/Key 暴露/鉴权/限流/审计问题 |
+| 10 | 清理 | **先明确引用关系再清理** | 详见 §1.A.0 P0-0.2~0.5 引用矩阵 |
+| 11 | CDN 资源 | **下载到 webui/public/cdn/，可传 GitHub** | 解 modao.cc 外网依赖；产物可重用 |
+| 12 | README 滞后 | **纳入 Phase 0**（P0-0.7） | 同步 |
+| 13 | 备份垃圾 | **Phase 0 一并清理**（P0-0.6，#10 已审） | 4.7 GB |
+| 14 | Web 化对象 | **首要执行对象**（与 v2.0 ADR-07 一致） | 业务层 = 实战链路验证的 7 段能力的 Service 容器 |
+| 15 | 桌面端 | **直接废弃** | 删除 main.py + app/ui/**（21 文件） + Node 壳；不再双端维护 |
+| 16 | 可核性闸门 | **Phase 1 落地表结构** | 实现留 Phase 4；表结构低成本预留 |
+| 17 | dataviz skill | **Phase 0 引入**（P0-24） | 跨专业总览页 + 报告页用 dataviz |
+| 18 | parallel-worktree | **Phase 2 后启用** | Phase 2 之前串行；多模块并行时 worktree 隔离 |
+| **19** | **业务层 9880 行** | **保留算法实现，重写集成层**（#1 务实解） | 函数签名不变 + Pydantic schema + Service 包装层；工作量 4 周（vs 完全重写 12+ 周） |
+
+**技术栈定稿**（基于以上 19 项）：
+- **后端**：FastAPI + uvicorn 单进程（模块化单体）
+- **数据库**：PostgreSQL 16 + PostGIS 3.4（B4 空间查询）
+- **ORM**：SQLAlchemy 2.x async + Alembic
+- **鉴权**：Casbin（参考 RuoYi 4 表设计）+ 当前免登录
+- **CAD 解析**：ezdwg + ezdxf + ODA（容器内）
+- **LLM**：5 后端 ABC（[app/takeoff/llm_backends.py](app/takeoff/llm_backends.py) 保留），后端转发
+- **前端**：React 18 + TypeScript + Vite + Element Plus + RuoYi-Vue 风格布局
+- **渲染器**：Canvas 2D（WebGL 延后）
+- **部署**：Docker Compose（fastapi + postgis + 可选 ollama），Linux 物理机/容器 7×24
+- **测试**：pytest 11 现有 + 新增 API/renderer/regression + playwright E2E
+
+**重新基线**：v2.0 文档 9 个 ADR 中 ADR-01/02/05/06/08 仍适用；ADR-03/04/07/09 在 Phase 0 P0-8/9/15/6/7 落实；新增 4 项（Linux 部署/RuoYi RBAC/免登录预留/CDN 本地化）。
