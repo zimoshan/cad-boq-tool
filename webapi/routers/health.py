@@ -1,6 +1,5 @@
 """/health 健康检查 + / 根"""
-from __future__ import annotations
-
+# 不使用 from __future__ import annotations：与 binding/boq/cad/dataset 同样原因
 from fastapi import APIRouter
 
 from webapi.config import get_settings

@@ -1,6 +1,5 @@
 """/api/dataset 路由（P0-22，#3 测试数据通路占位）"""
-from __future__ import annotations
-
+# 不使用 from __future__ import annotations：Pydantic 2.8 + FastAPI 0.115 forward ref 解析问题
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
