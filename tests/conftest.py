@@ -26,6 +26,7 @@ _app_db_init.init_db()
 collect_ignore = [
     "test_canvas_lod.py",  # 引用 app.ui.canvas（Phase 0 已删）
     "test_dwg_first.py",   # ezdwg 0.5.0 Windows 解码限制（库问题）
+    "test_alembic_cli.py",  # 本机 Windows venv alembic CLI 不在 PATH；CI 跑（PG postgis service）
 ]
 
 # 测试期用最小 env：避免触发真实 .env / env.example
