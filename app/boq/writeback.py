@@ -73,7 +73,10 @@ def _log_writeback_audit(
     takability: str,
     file_sha256: str = "",
 ) -> None:
-    """B5 S7：写 writeback_audit（保真回写审计）"""
+    """B5 S7：写 writeback_audit（保真回写审计）
+
+    P4 增强：file_sha256 是源 BOQ Excel 的 SHA-256（防 tamper 检测）
+    """
     try:
         with db.get_conn() as conn:
             conn.execute(
@@ -83,6 +86,19 @@ def _log_writeback_audit(
             )
     except Exception:
         pass
+
+
+def compute_file_sha256(file_path: str) -> str:
+    """P4 v1.0 §6.4：算源文件 SHA-256（防 tamper 检测）"""
+    import hashlib
+    try:
+        h = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except (OSError, IOError):
+        return ""
 
 
 def _collect_sheet_drawing_types(boq_item_id: int) -> list[str]:

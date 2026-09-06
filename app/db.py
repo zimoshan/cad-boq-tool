@@ -358,6 +358,21 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE sheet ADD COLUMN blocks_json TEXT DEFAULT ''")
     if "is_base" not in cols:
         conn.execute("ALTER TABLE sheet ADD COLUMN is_base INTEGER DEFAULT 0")
+    # P4 v1.0 §2.5：补 writeback_audit 表（旧 SQLite schema 没包含）
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    if "writeback_audit" not in tables:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS writeback_audit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+                boq_item_id INTEGER NOT NULL REFERENCES boq_item(id) ON DELETE CASCADE,
+                original_qty REAL DEFAULT 0,
+                measured_qty REAL DEFAULT 0,
+                takability TEXT DEFAULT 'MEASURABLE',
+                file_sha256 TEXT DEFAULT '',
+                created_at TEXT DEFAULT ''
+            )
+        """)
     # P3：boq_item 实测数量列（工程量回写，旧库补充）
     bcols = {r[1] for r in conn.execute("PRAGMA table_info(boq_item)").fetchall()}
     if "measured_qty" not in bcols:

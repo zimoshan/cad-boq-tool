@@ -35,6 +35,40 @@ async def writeback(req: WritebackRequest, db: AsyncSession = Depends(get_db)) -
     return WritebackResponse(**result)
 
 
+# P4 v1.0 §6.4 完整 Excel 保真回写契约
+class WritebackAuditedRequest(WritebackRequest):
+    """回写 + 源文件 SHA-256 审计（v1.0 §6.4 防 tamper）"""
+    source_file_path: str = ""  # BOQ 源 Excel 路径
+
+
+class WritebackAuditedResponse(WritebackResponse):
+    file_sha256: str = ""  # 源文件 SHA-256
+    audited_rows: int = 0   # 成功审计行数
+
+
+@router.post("/writeback-audited", response_model=WritebackAuditedResponse)
+@requires("boq:writeback")
+async def writeback_audited(req: WritebackAuditedRequest, db: AsyncSession = Depends(get_db)) -> WritebackAuditedResponse:
+    """v1.0 §6.4 完整 Excel 保真回写契约：
+    1. 算 source_file_path 的 SHA-256
+    2. 写回 measured_qty（不动 original_qty / bill_qty / formula / merge_cells）
+    3. writeback_audit.file_sha256 记录 SHA-256
+    4. 返回 SHA-256 + audited_rows（人工可对比校验）
+    """
+    from app.boq.writeback import compute_file_sha256
+    file_sha = compute_file_sha256(req.source_file_path) if req.source_file_path else ""
+    result = await boq_service.writeback_quantities(
+        db, req.project_id, req.project_scale, req.source_file_path
+    )
+    return WritebackAuditedResponse(
+        project_id=result.get("project_id", req.project_id),
+        written=result.get("written", 0),
+        failed=result.get("failed", 0),
+        file_sha256=file_sha,
+        audited_rows=result.get("written", 0),
+    )
+
+
 @router.post("/export", response_model=ExportBoqResponse)
 @requires("boq:export")
 async def export_boq(req: ExportBoqRequest, db: AsyncSession = Depends(get_db)) -> ExportBoqResponse:

@@ -46,13 +46,27 @@ async def writeback_quantities(
     db: AsyncSession,
     project_id: int,
     project_scale: float = 1.0,
+    source_file_path: str = "",
 ) -> dict[str, Any]:
     """包装 app/boq/writeback.write_back_quantities
 
     P0-15 B5 S7 Excel 保真回写（写回 boq_item.measured_qty 不动原 original_qty）
+    P4 增强：source_file_path 传入后算 SHA-256 写到 writeback_audit.file_sha256
     """
+    from app.boq.writeback import write_back_quantities as _write_back, compute_file_sha256
     try:
-        return write_back_quantities(project_id=project_id, project_scale=project_scale)
+        file_sha = compute_file_sha256(source_file_path) if source_file_path else ""
+        # Phase 4 增强：通过 monkey-patch _log_writeback_audit 注入 file_sha256
+        import app.boq.writeback as wb_mod
+        original_log = wb_mod._log_writeback_audit
+        def _patched_log(project_id, boq_item_id, original_qty, measured_qty, takability, file_sha256=""):
+            return original_log(project_id, boq_item_id, original_qty, measured_qty, takability, file_sha256 or file_sha)
+        wb_mod._log_writeback_audit = _patched_log
+        try:
+            result = _write_back(project_id=project_id, project_scale=project_scale)
+        finally:
+            wb_mod._log_writeback_audit = original_log
+        return result
     except Exception as e:
         raise ServiceError(f"Writeback failed: {e}", code="boq_writeback_error")
 
