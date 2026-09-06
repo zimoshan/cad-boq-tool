@@ -123,6 +123,10 @@
 
 #### A.6 ~ A.10 · Phase 1~6（占位，Phase 0 完成后细化）
 - [ ] **Phase 1 · 数据资产闸门**（#16 可核性表实现 + #3 测试数据通路 + ADR-06 Dataset 整理）⬜
+  - [ ] P1-1 Takability 完整实现（6 状态语义细化：按 mapping count + 图纸黑名单 + 版本冲突 + 暂定标注）
+  - [ ] P1-2 Dataset DB 化：test_data_registry 表（alembic 0003）+ 替换 JSON 存储
+  - [ ] P1-3 `D:\ifc_2026-08-24_0536` 数据资产整理（ADR-06：37 电气 + 6 机械 + 26 建筑 + 医疗 → `datasets/lbh/` 归档）⬜（需真实文件，用户手动）
+  - [ ] P1-4 webui Vite dev 验证（`npm install` + `npm run dev`）⬜（需 Node 18+，用户手动）
 - [ ] **Phase 2 · FastAPI 后端 + JobManager + SSE + RBAC + 全部 Service 路由** ⬜
 - [ ] **Phase 3 · React + Canvas 2D 渲染器**（1.2 万小图先验 → 7.9 万，最大风险项）⬜
 - [ ] **Phase 4 · 业务闭环联调 + Excel 保真回写契约**（v2.0 §6.4）⬜
