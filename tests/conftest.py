@@ -6,10 +6,17 @@ autouse fixture 隔离 test 间状态：
 - webapi.config.get_settings lru_cache 清（避免 env 污染）
 - webapi.jobs.manager.job_manager 单例重置（避免 lifespan 残留）
 - Casbin enforcer 重置（避免策略缓存污染）
+
+module-level：app.db.init_db() 初始化所有表（避免 no such table）
 """
 from __future__ import annotations
 
 import os
+
+# module-level：初始化 app.db schema（pytest collection 阶段，所有 test 模块 import 前）
+# 避免 "no such table: llm_settings" 等表缺失错误
+from app import db as _app_db_init
+_app_db_init.init_db()
 
 # Phase 0 桌面端废弃（#15）后，部分旧测试引用已删的 app.ui 路径：
 # - test_canvas_lod.py: from app.ui import canvas
