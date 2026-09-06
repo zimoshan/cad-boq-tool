@@ -10,6 +10,7 @@ Phase 6 工程化：生产可观测性
     setup_logging()
     app.add_middleware(RequestIdMiddleware)
 """
+
 from __future__ import annotations
 
 import logging
