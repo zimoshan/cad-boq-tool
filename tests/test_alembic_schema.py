@@ -14,14 +14,27 @@ import pytest
 
 @pytest.fixture
 def sqlite_db():
-    """临时 SQLite DB（避免污染真实 ~/.cad-boq-tool/projects.db）"""
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        path = f.name
+    """临时 SQLite DB（避免污染真实 ~/.cad-boq-tool/projects.db）
+
+    Windows 上 SQLAlchemy engine 持文件句柄，teardown unlink 偶发 PermissionError
+    → try/except 容忍（tmp 目录自动清理）
+    """
+    fd, path = tempfile.mkstemp(suffix=".db")
+    import os
+    os.close(fd)
     conn = sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    yield conn, path
-    conn.close()
-    Path(path).unlink(missing_ok=True)
+    try:
+        yield conn, path
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        try:
+            Path(path).unlink(missing_ok=True)
+        except (OSError, PermissionError):
+            pass  # Windows: SQLAlchemy engine 持句柄，忽略 cleanup 失败
 
 
 def _table_has_column(conn, table: str, column: str) -> bool:
@@ -41,12 +54,22 @@ class TestAlembicInitialSchema:
     """0001 基础 12 业务表 + 5 RBAC 表"""
 
     def test_required_tables_exist(self, sqlite_db):
-        conn, _ = sqlite_db
-        # 用 app.db._SCHEMA 跑 init（+ _migrate 跑 P2-v10/P2-writeback）
+        """12 业务表（_SCHEMA）+ 5 RBAC 表（SQLAlchemy ORM）"""
+        conn, path = sqlite_db
         from app import db as app_db
+        from webapi.db.base import Base
+        # 业务表用 _SCHEMA
         conn.executescript(app_db._SCHEMA)
         app_db._migrate(conn)
         conn.commit()
+        # RBAC 5 表用 SQLAlchemy ORM（_SCHEMA 不含这些）
+        # 关键：必须先 import webapi.auth.models 让 Base.metadata 收集到 SysUser 等
+        from webapi.auth import models as _auth_models  # noqa: F401
+        from sqlalchemy import create_engine
+        engine = create_engine(f"sqlite:///{path}")
+        Base.metadata.create_all(engine)
+        engine.dispose()
+
         expected_tables = [
             "project", "sheet", "entity", "boq_item", "mapping", "block_legend",
             "engineering_object", "llm_run", "project_config", "binding_candidate",
