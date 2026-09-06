@@ -4,7 +4,7 @@
   "schema_version": "cad-1.0",
   "parser_version": "v2",
   "source_revision": "R4",
-  "generated_at": "2026-09-06T16:09:51.979431",
+  "generated_at": "2026-09-06T17:30:31.644041",
   "note": "P0-30 占位结构（v1.0 §7-§11）。真实 DWG/DXF/BOQ 由用户从 D:\\ifc_2026-08-24_0536 手动整理后填入 files[]。",
   "files": []
 }

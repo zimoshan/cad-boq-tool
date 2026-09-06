@@ -129,7 +129,5 @@ jobs:
 
       - name: Run ruff
         run: |
-          # ruff 自动 fix（imports + 风格）+ format check
-          # 当前遗留 B904 raise-from 53 个（实战业务代码不阻塞）；CI 不阻塞
-          ruff check --fix webapi/ app/ || true
+          ruff check webapi/ app/
           ruff format --check webapi/ app/
