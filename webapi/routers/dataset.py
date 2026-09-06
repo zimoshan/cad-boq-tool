@@ -108,7 +108,7 @@ async def update_manifest(req: ManifestUpdateRequest) -> dict:
     except Exception as e:
         from webapi.services.base import ServiceError
 
-        raise ServiceError(str(e), code="manifest_update_error")
+        raise ServiceError(str(e), code="manifest_update_error") from e
     if not manifest:
         from fastapi import HTTPException
 

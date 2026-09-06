@@ -37,7 +37,7 @@ async def parse_boq_excel(
             "meta": meta,
         }
     except FileNotFoundError:
-        raise NotFoundError("BOQ file", file_path)
+        raise NotFoundError("BOQ file", file_path) from None
     except Exception as e:
         raise ServiceError(f"BOQ parse failed: {e}", code="boq_parse_error") from e
 

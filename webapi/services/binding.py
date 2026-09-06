@@ -100,8 +100,8 @@ async def confirm_binding(
     except Exception as e:
         # _accepted_block_boq 抛 ReviewError（已绑定其他 BOQ）→ 409 Conflict
         if "已绑定" in str(e) or "already bound" in str(e).lower():
-            raise ServiceError(str(e), status_code=409, code="duplicate_binding")
-        raise NotFoundError("Candidate", candidate_id)
+            raise ServiceError(str(e), status_code=409, code="duplicate_binding") from e
+        raise NotFoundError("Candidate", candidate_id) from e
 
 
 async def reject_binding(
