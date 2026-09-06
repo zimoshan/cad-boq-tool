@@ -26,7 +26,7 @@ async def run_single_sheet_takeoff(
             "result": result,
         }
     except Exception as e:
-        raise ServiceError(f"Takeoff failed: {e}", code="takeoff_error")
+        raise ServiceError(f"Takeoff failed: {e}", code="takeoff_error") from e
 
 
 async def run_folder_takeoff(
@@ -36,7 +36,7 @@ async def run_folder_takeoff(
 ) -> dict[str, Any]:
     """文件夹维度 takeoff（多图聚合）"""
     if not folder_path:
-        raise ServiceError("folder_path required", code="invalid_input")
+        raise ServiceError("folder_path required", code="invalid_input") from None
     try:
         result = run_folder_pipeline(project_id=project_id, folder_path=folder_path)
         return {
@@ -45,4 +45,4 @@ async def run_folder_takeoff(
             "result": result,
         }
     except Exception as e:
-        raise ServiceError(f"Folder takeoff failed: {e}", code="takeoff_error")
+        raise ServiceError(f"Folder takeoff failed: {e}", code="takeoff_error") from e

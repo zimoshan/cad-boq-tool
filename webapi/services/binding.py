@@ -85,7 +85,7 @@ async def generate_candidates_for_project(
             "stats": result.get("stats", {}),
         }
     except Exception as e:
-        raise ServiceError(f"Generate candidates failed: {e}", code="binding_generate_error")
+        raise ServiceError(f"Generate candidates failed: {e}", code="binding_generate_error") from e
 
 
 async def confirm_binding(
@@ -144,4 +144,4 @@ async def reject_binding(
             pass
         return result
     except Exception as e:
-        raise ServiceError(f"Reject binding failed: {e}", code="binding_reject_error")
+        raise ServiceError(f"Reject binding failed: {e}", code="binding_reject_error") from e

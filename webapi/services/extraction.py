@@ -34,7 +34,7 @@ async def run_extraction(
             "object_ids": result.get("object_ids", []),
         }
     except Exception as e:
-        raise ServiceError(f"Extraction failed: {e}", code="extraction_error")
+        raise ServiceError(f"Extraction failed: {e}", code="extraction_error") from e
 
 
 async def list_engineering_objects(

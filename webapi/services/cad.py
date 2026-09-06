@@ -39,7 +39,7 @@ async def parse_cad_file(
         # 包装 app/cad/cad_parser.parse_dxf
         parsed = parse_dxf(file_path)
     except Exception as e:
-        raise ServiceError(f"CAD parse failed: {e}", code="cad_parse_error")
+        raise ServiceError(f"CAD parse failed: {e}", code="cad_parse_error") from e
 
     return {
         "project_id": project_id,

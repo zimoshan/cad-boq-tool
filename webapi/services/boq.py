@@ -39,7 +39,7 @@ async def parse_boq_excel(
     except FileNotFoundError:
         raise NotFoundError("BOQ file", file_path)
     except Exception as e:
-        raise ServiceError(f"BOQ parse failed: {e}", code="boq_parse_error")
+        raise ServiceError(f"BOQ parse failed: {e}", code="boq_parse_error") from e
 
 
 async def writeback_quantities(
@@ -75,7 +75,7 @@ async def writeback_quantities(
             wb_mod._log_writeback_audit = original_log
         return result
     except Exception as e:
-        raise ServiceError(f"Writeback failed: {e}", code="boq_writeback_error")
+        raise ServiceError(f"Writeback failed: {e}", code="boq_writeback_error") from e
 
 
 async def export_boq_to_excel(
@@ -97,9 +97,9 @@ async def export_boq_to_excel(
     from app.report import export_report
 
     if not output_path:
-        raise ServiceError("output_path required", code="invalid_input")
+        raise ServiceError("output_path required", code="invalid_input") from None
     if not output_path.endswith((".xlsx", ".xls")):
-        raise ServiceError("output_path must be .xlsx or .xls", code="invalid_input")
+        raise ServiceError("output_path must be .xlsx or .xls", code="invalid_input") from None
 
     # 确保目录存在
     out_dir = os.path.dirname(output_path)
@@ -123,4 +123,4 @@ async def export_boq_to_excel(
             "by_takability": {},
         }
     except Exception as e:
-        raise ServiceError(f"Export BOQ failed: {e}", code="boq_export_error")
+        raise ServiceError(f"Export BOQ failed: {e}", code="boq_export_error") from e

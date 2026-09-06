@@ -22,12 +22,12 @@ async def get_llm_settings(db: AsyncSession) -> dict[str, Any]:
         result = await db.execute(text("SELECT * FROM llm_settings WHERE id = 1"))
         row = result.first()
         if not row:
-            raise ServiceError("llm_settings not initialized", code="llm_settings_missing")
+            raise ServiceError("llm_settings not initialized", code="llm_settings_missing") from None
         return dict(row._mapping)
     except ServiceError:
         raise
     except Exception as e:
-        raise ServiceError(f"Failed to read llm_settings: {e}", code="db_error")
+        raise ServiceError(f"Failed to read llm_settings: {e}", code="db_error") from e
 
 
 async def update_llm_settings(db: AsyncSession, updates: dict[str, Any]) -> dict[str, Any]:
@@ -70,7 +70,7 @@ async def update_llm_settings(db: AsyncSession, updates: dict[str, Any]) -> dict
         return await get_llm_settings(db)
     except Exception as e:
         await db.rollback()
-        raise ServiceError(f"Failed to update llm_settings: {e}", code="db_error")
+        raise ServiceError(f"Failed to update llm_settings: {e}", code="db_error") from e
 
 
 async def chat_completion(
@@ -99,4 +99,4 @@ async def chat_completion(
             "output": output,
         }
     except Exception as e:
-        raise ServiceError(f"LLM chat failed: {e}", code="llm_chat_error")
+        raise ServiceError(f"LLM chat failed: {e}", code="llm_chat_error") from e
