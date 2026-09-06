@@ -35,3 +35,4 @@ openai==1.45.0
 
 # Utility
 pyarrow==16.1.0
+structlog==24.4.0
