@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from webapi.config import get_settings
 from webapi.db import async_session_factory
 from webapi.auth.service import get_or_create_admin
+from webapi.routers import binding, boq, cad, health
 
 settings = get_settings()
 
@@ -19,16 +20,13 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用启动/关闭钩子"""
-    # 启动：确保 sysadmin 用户存在（no_login 模式）
     async with async_session_factory() as db:
         try:
             await get_or_create_admin(db)
         except Exception as e:
-            # 启动期 DB 未就绪时静默（避免启动失败）
             import logging
             logging.getLogger(__name__).warning(f"启动期 admin 初始化跳过：{e}")
     yield
-    # 关闭：清理 engine
     from webapi.db import engine
     await engine.dispose()
 
@@ -49,28 +47,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# ---------- 健康检查 ----------
-@app.get("/health")
-async def health() -> dict:
-    """健康检查（Docker HEALTHCHECK 用）"""
-    return {
-        "status": "ok",
-        "version": "0.2.0-webify",
-        "auth_mode": settings.auth_mode,
-        "app_env": settings.app_env,
-    }
-
-
-@app.get("/")
-async def root() -> dict:
-    """根端点"""
-    return {
-        "name": "cad-boq-tool Web API",
-        "version": "0.2.0-webify",
-        "docs": "/docs",
-        "health": "/health",
-    }
+# 路由注册（A.2 第 1 批：4 域 + health）
+app.include_router(health.router)
+app.include_router(cad.router)
+app.include_router(binding.router)
+app.include_router(boq.router)
 
 
 # ---------- Phase 0 占位端点 ----------
