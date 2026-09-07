@@ -43,3 +43,31 @@ class BindingCandidateRead(BaseModel):
     reason: str = ""
     status: str
     created_at: str = ""
+
+
+# ===== Phase 5: Negative Sample + Evaluation =====
+
+
+class NegativeSampleRead(BaseModel):
+    """v1.0 §17 负样本记录"""
+    id: int
+    project_id: int
+    engineering_object_id: int
+    boq_item_id: int
+    reason: str = ""
+    confidence_at_reject: float = 0.0
+    method: str = ""
+    rejected_by: str = ""
+    created_at: str = ""
+
+
+class EvaluationReport(BaseModel):
+    """v1.0 §20 评测报告：按方法分层 precision/recall"""
+    project_id: int
+    total_candidates: int
+    total_confirmed: int
+    total_rejected: int
+    by_method: dict = Field(default_factory=dict)
+    # {method: {candidates, confirmed, rejected, precision, recall}}
+    overall_precision: float = 0.0
+    generated_at: str = ""

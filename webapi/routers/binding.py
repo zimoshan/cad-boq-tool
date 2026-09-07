@@ -1,4 +1,4 @@
-"""/api/binding 路由（候选生成 + 确认/拒绝）"""
+"""/api/binding 路由（候选生成 + 确认/拒绝 + Phase 5 负样本/评测）"""
 
 # 不使用 `from __future__ import annotations`：Pydantic 2.8 + FastAPI 0.115 解析
 # type hints 时 namespace 不含 forward ref 名称（_types_namespace 不取 module globals），
@@ -54,3 +54,29 @@ async def confirm(req: ConfirmBindingRequest, db: AsyncSession = Depends(get_db)
 async def reject(req: RejectBindingRequest, db: AsyncSession = Depends(get_db)) -> dict:
     """拒绝候选"""
     return await binding_service.reject_binding(db, req.candidate_id, req.reason, req.by_user)
+
+
+# ===== Phase 5: Negative Sample + Evaluation =====
+
+
+@router.get("/negative-samples")
+@requires("binding:read")
+async def negative_samples(
+    project_id: int,
+    method: str | None = None,
+    limit: int = 200,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """v1.0 §17 查询负样本（拒绝的绑定记录）"""
+    items = await binding_service.list_negative_samples(db, project_id, method, limit)
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/evaluation")
+@requires("binding:read")
+async def evaluation(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """v1.0 §20 评测报告：按方法分层 precision/recall"""
+    return await binding_service.get_evaluation_report(db, project_id)

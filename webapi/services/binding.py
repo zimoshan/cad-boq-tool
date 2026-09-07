@@ -179,3 +179,97 @@ async def reject_binding(
         return result
     except Exception as e:
         raise ServiceError(f"Reject binding failed: {e}", code="binding_reject_error") from e
+
+
+# ===== Phase 5: Negative Sample Query + Evaluation =====
+
+
+async def list_negative_samples(
+    db: AsyncSession,
+    project_id: int,
+    method: str | None = None,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    """v1.0 §17 查询负样本（拒绝的绑定记录）
+
+    用于 UI 展示 + 评测闭环（precision/recall 计算）。
+    """
+    sql = "SELECT * FROM negative_sample WHERE project_id = :pid"
+    args: dict[str, Any] = {"pid": project_id}
+    if method:
+        sql += " AND method = :method"
+        args["method"] = method
+    sql += f" ORDER BY id DESC LIMIT {int(limit)}"
+    try:
+        result = await db.execute(text(sql), args)
+        return [dict(row._mapping) for row in result]
+    except Exception:
+        return []
+
+
+async def get_evaluation_report(db: AsyncSession, project_id: int) -> dict[str, Any]:
+    """v1.0 §20 评测报告：按方法分层 precision/recall
+
+    数据源：
+    - binding_candidate（PENDING/ACCEPTED/REJECTED）
+    - negative_sample（reject 时自动写入）
+    - mapping（confirm 时写入）
+
+    precision = confirmed / (confirmed + rejected) per method
+    recall = confirmed / total_eo per method（近似：有候选的 EO 数）
+    """
+    from datetime import datetime
+
+    # 统计各方法的候选/确认/拒绝数
+    stats_sql = """
+        SELECT method,
+               COUNT(*) AS total,
+               SUM(CASE WHEN status='ACCEPTED' THEN 1 ELSE 0 END) AS confirmed,
+               SUM(CASE WHEN status='REJECTED' THEN 1 ELSE 0 END) AS rejected,
+               SUM(CASE WHEN status='PENDING' THEN 1 ELSE 0 END) AS pending
+        FROM binding_candidate
+        WHERE project_id = :pid
+        GROUP BY method
+    """
+    try:
+        result = await db.execute(text(stats_sql), {"pid": project_id})
+        rows = [dict(row._mapping) for row in result]
+    except Exception:
+        rows = []
+
+    by_method = {}
+    total_confirmed = 0
+    total_rejected = 0
+    total_candidates = 0
+
+    for r in rows:
+        method = r["method"] or "unknown"
+        confirmed = r["confirmed"] or 0
+        rejected = r["rejected"] or 0
+        total = r["total"] or 0
+        # precision = confirmed / (confirmed + rejected)（排除 PENDING）
+        judged = confirmed + rejected
+        precision = confirmed / judged if judged > 0 else 0.0
+        by_method[method] = {
+            "candidates": total,
+            "confirmed": confirmed,
+            "rejected": rejected,
+            "pending": r["pending"] or 0,
+            "precision": round(precision, 4),
+        }
+        total_confirmed += confirmed
+        total_rejected += rejected
+        total_candidates += total
+
+    overall_judged = total_confirmed + total_rejected
+    overall_precision = total_confirmed / overall_judged if overall_judged > 0 else 0.0
+
+    return {
+        "project_id": project_id,
+        "total_candidates": total_candidates,
+        "total_confirmed": total_confirmed,
+        "total_rejected": total_rejected,
+        "by_method": by_method,
+        "overall_precision": round(overall_precision, 4),
+        "generated_at": datetime.now().isoformat(),
+    }

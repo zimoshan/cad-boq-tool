@@ -13,6 +13,7 @@ import contextlib
 from .. import db
 from .. import mapping as map_svc
 from . import candidate as cand
+from .spec_match import SpecMatchStatus, match_spec
 
 
 class ReviewError(Exception):
@@ -120,6 +121,18 @@ def confirm_binding(project_id: int, candidate_id: int, project_scale: float = 1
             f"一图块只能对应一个 BOQ 子项，请勿重复绑定"
         )
 
+    # Phase 5：规格匹配检查（v1.0 §19）
+    boq_items = db.get_boq_items(project_id)
+    boq = next((b for b in boq_items if b.id == c.boq_item_id), None)
+    spec_status = SpecMatchStatus.UNKNOWN
+    spec_detail = ""
+    if boq:
+        eo_spec = getattr(eo, "tag", "") or f"{eo.block_name} {eo.layer_name}"
+        boq_spec = getattr(boq, "description", "") or getattr(boq, "code", "")
+        sm = match_spec(eo_spec, boq_spec)
+        spec_status = sm.status
+        spec_detail = sm.detail
+
     # 写正式 mapping：equipment→block 模式；linear/area→layer 模式（任务八）
     if eo.object_type == "equipment" and eo.block_name:
         added, conflicts = map_svc.add_block_mapping(c.boq_item_id, eo.sheet_id, eo.block_name)
@@ -162,6 +175,8 @@ def confirm_binding(project_id: int, candidate_id: int, project_scale: float = 1
         "boq_item_id": c.boq_item_id,
         "qty": r["qty"],
         "count": r["count"],
+        "spec_match_status": spec_status.value if hasattr(spec_status, "value") else str(spec_status),
+        "spec_match_detail": spec_detail,
     }
 
 

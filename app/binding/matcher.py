@@ -24,9 +24,11 @@ from concurrent.futures import ThreadPoolExecutor
 from .. import config, db
 from ..llm.runner import llm_available
 from . import candidate as cand
+from .calibration import CalibrationInput, calibrate
 from .embedding_matcher import enriched_eo_text, semantic_candidates
 from .llm_matcher import llm_rerank
 from .rule_matcher import already_bound, historical_confirmed, match_rule
+from .spec_match import SpecMatchStatus, match_spec
 from .text_norm import boq_searchable
 
 # 候选元组: (boq_item_id, score, reason, method, llm_run_id|None)
@@ -73,12 +75,68 @@ def _rejected_pairs(project_id: int, eo) -> set:
 
 
 def _write_final(project_id: int, eo, final: list, rejected: set, stats: dict, created: list) -> int:
-    """过滤被拒组合后写候选，返回实际写入数。"""
+    """过滤被拒组合后写候选，返回实际写入数。
+
+    Phase 5：对每个候选应用 Confidence Calibration（calibration.py），
+    综合 rule_score / embedding / spec_match / 历史准确率 → 校准置信度。
+    """
+    boq_items = db.get_boq_items(project_id)
+    # 兼容 BoqItem 对象与 dict（测试/上层 mock 两种形态）；无 id 的项跳过
+    boq_by_id = {}
+    for it in boq_items:
+        if it is None:
+            continue
+        bid_ = it["id"] if isinstance(it, dict) and "id" in it else getattr(it, "id", None)
+        if bid_ is None:
+            continue
+        boq_by_id[bid_] = it
+
+    # EO 文本（用于 spec 匹配上下文）
+    eo_text = ""
+    try:
+        eo_text = f"{getattr(eo, 'tag', '')} {getattr(eo, 'block_name', '')} {getattr(eo, 'layer_name', '')}"
+    except Exception:
+        pass
+
     wrote = 0
     for bid, score, reason, method, run_id in final:
         if bid in rejected:
             stats["skipped_rejected"] += 1
             continue
+
+        # ===== Phase 5: Confidence Calibration =====
+        boq = boq_by_id.get(bid)
+        spec_score = 0.5  # UNKNOWN 默认
+        has_conflict = False
+        if boq:
+            eo_spec = getattr(eo, "tag", "") or eo_text
+            boq_spec = getattr(boq, "description", "") or getattr(boq, "code", "")
+            if isinstance(boq, dict):
+                boq_spec = boq_spec or boq.get("code", "")
+            sm = match_spec(eo_spec, boq_spec)
+            spec_score = {
+                SpecMatchStatus.EXACT: 1.0,
+                SpecMatchStatus.NORMALIZED_EQUAL: 0.95,
+                SpecMatchStatus.COMPATIBLE: 0.7,
+                SpecMatchStatus.UNKNOWN: 0.5,
+                SpecMatchStatus.CONFLICT: 0.0,
+            }.get(sm.status, 0.5)
+            has_conflict = sm.needs_review
+
+        # 构造 CalibrationInput
+        cal_input = CalibrationInput(
+            llm_confidence=float(score) if method == cand.METHOD_LLM else 0.0,
+            rule_score=float(score) if method == cand.METHOD_RULE else 0.0,
+            embedding_similarity=float(score) if method == cand.METHOD_EMBEDDING else 0.0,
+            spec_match_score=spec_score,
+            historical_accuracy=0.8 if method == cand.METHOD_RULE and "历史" in reason else 0.0,
+            top1_top2_margin=0.5,  # 简化：默认中等 margin
+            has_conflict=has_conflict,
+        )
+        cal_result = calibrate(cal_input)
+        calibrated_confidence = cal_result["final_confidence"]
+
+        # 写入校准后的置信度
         created.append(
             db.create_binding_candidate(
                 project_id,
@@ -86,7 +144,7 @@ def _write_final(project_id: int, eo, final: list, rejected: set, stats: dict, c
                 bid,
                 method=method,
                 score=float(score),
-                confidence=float(score),
+                confidence=calibrated_confidence,  # Phase 5: 校准后置信度
                 reason=reason,
                 llm_run_id=run_id,
             )
