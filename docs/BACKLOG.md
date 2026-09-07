@@ -139,7 +139,7 @@
   - [x] P1-2 Dataset DB 化：test_data_registry 表（alembic 0003）+ DB/JSON 双后端（env `TEST_DATA_BACKEND` 切换，JSON 本地 fallback）✅ 2026-09-07（[webapi/services/dataset.py](webapi/services/dataset.py) TestDataRegistry + [routers/dataset.py](webapi/routers/dataset.py) 4 端点接 DB 路径）
   - [ ] P1-3 `D:\ifc_2026-08-24_0536` 数据资产整理（ADR-06：37 电气 + 6 机械 + 26 建筑 + 医疗 → `datasets/lbh/` 归档）⬜（需真实文件，用户手动）
   - [x] P1-4 webui Vite dev 验证（`npm install` + `npm run dev`）✅ 2026-09-07（Node 20.20.2 + node_modules 已装 + `npm run build` 通过 + dev server :5173 HTTP 200；修复 3 个 TS 编译错误：BindingWorkbench 手写类型→生成类型 + 删除未用 `api`/`setCandidates`）
-- [ ] **Phase 2 · FastAPI 后端 + JobManager + SSE + RBAC + 全部 Service 路由** 🚧（2026-09-07 进度 10/10 代码就绪：11 routers ~42 端点 + JobManager 内存版 + SSE 流 + cancel/cleanup/stats + RBAC `@requires`；**2026-09-07 补齐注册表闭环**：`webapi/jobs/tasks.py` 6 任务（boq.parse/cad.parse/extraction.run/takeoff.sheet/takeoff.folder/binding.generate）+ `GET /api/jobs/tasks` + `submit_by_name` + to_dict 排除 `__func__`；测试 292 全绿。剩余：Job 状态持久化 PG（Phase 3 移入））
+- [x] **Phase 2 · FastAPI 后端 + JobManager + SSE + RBAC + 全部 Service 路由** ✅ 2026-09-07（commit `4a40174`：11 routers ~42 端点 + JobManager 内存版 + SSE 流 + cancel/cleanup/stats + RBAC `@requires`；**任务注册表闭环**：`webapi/jobs/tasks.py` 6 任务 + `GET /api/jobs/tasks` + `submit_by_name` + to_dict 排除 `__func__`；测试 292 全绿；**剩余 Job 状态持久化 PG 移入 Phase 4**）
 - [ ] **Phase 3 · React + Canvas 2D 渲染器**（1.2 万小图先验 → 7.9 万，最大风险项）⬜（8 组件布局 + theme + API client 已就绪；[Canvas2D.tsx](webui/src/components/Canvas2D.tsx) 仅 11 行占位壳；BOQTable 已接项目 ID + Excel 路径输入）
   - 开工前置调研（2026-09-07 已做）：v2.0 §7.2 渲染管线对照 `app/ui/canvas.py` 逐函数翻译；Canvas 2D + SpatialGrid + LOD；79,424 实体在 Canvas 2D 舒适区（阈值 10 万才 WebGL）；先 sheet 73（1.2 万）验证再上 7.9 万；目标平移 ≥30fps / 大图视口 <500ms（节流 250ms）
   - **契约偏差待决策**：v2.0 设计 `GET /api/drawings/{sid}/viewport?bbox=`，现有 `POST /api/cad/viewport`（body bbox）——沿用 or 对齐设计契约，开工时定
@@ -150,7 +150,7 @@
 - [ ] **Phase 5 · AI**（Candidate Union/Embedding/审核/正负样本/置信度校准）⬜
 - [ ] **Phase 6 · 工程化**（版本冲突/跨专业索引/组级降级/indexer/CI/CD）⬜
 
-**Phase 0 出口标准**（9 条）：① git tag pre-webify ✅ ② 桌面端启动 App 0 个 ✅ ③ Node 壳 0 个 ✅ ④ PG + PostGIS + 6 段能力 schema 完整 ✅ ⑤ FastAPI 起服务 + pytest 全绿 ✅（2026-09-07 本机 280 passed；GitHub Actions CI 已配置，实跑待首次 push）⑥ 前端 Vite dev 起 + Chrome 渲染同 design/main.html ✅（2026-09-07 `npm run build` 通过 + dev :5173 HTTP 200 + TS 错误修复）⑦ 测试数据通路占位 ✅ ⑧ 备份垃圾 0 ✅ ⑨ README 反映新架构 ✅。**Phase 0 出口标准全部达成（9/9）**。
+**Phase 0 出口标准**（9 条）：① git tag pre-webify ✅ ② 桌面端启动 App 0 个 ✅ ③ Node 壳 0 个 ✅ ④ PG + PostGIS + 6 段能力 schema 完整 ✅ ⑤ FastAPI 起服务 + pytest 全绿 ✅（2026-09-07 本机 292 passed；GitHub Actions CI 已配置，实跑待首次 push）⑥ 前端 Vite dev 起 + Chrome 渲染同 design/main.html ✅（2026-09-07 `npm run build` 通过 + dev :5173 HTTP 200 + TS 错误修复）⑦ 测试数据通路占位 ✅ ⑧ 备份垃圾 0 ✅ ⑨ README 反映新架构 ✅。**Phase 0 出口标准全部达成（9/9）**。
 
 ---
 
