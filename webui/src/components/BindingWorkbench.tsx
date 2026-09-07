@@ -1,8 +1,7 @@
 import React, { useState } from "react";
-import { api } from "../api/client";
+import { api, components } from "../api/client";
 
-interface Candidate { id: number; boq_item_id: number; score: number; confidence: number; reason: string; status: string; }
-interface GenerateResult { project_id: number; use_llm: boolean; candidates_created: number; stats: Record<string, number>; }
+type GenerateResult = components["schemas"]["GenerateCandidatesResponse"];
 
 export function BindingWorkbench() {
   const [projectId, setProjectId] = useState(1);
@@ -12,7 +11,6 @@ export function BindingWorkbench() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<GenerateResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [candidates, setCandidates] = useState<Candidate[]>([]);
 
   const handleGenerate = async () => {
     setBusy(true); setError(null); setResult(null);
@@ -39,18 +37,7 @@ export function BindingWorkbench() {
       {result && (
         <div style={{ padding: 12, background: "var(--bg-card)", borderRadius: 4, marginBottom: 12 }}>
           <div style={{ color: "var(--accent-success)" }}>✅ 生成 {result.candidates_created} 个候选</div>
-          <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>stats: {JSON.stringify(result.stats)}</div>
-        </div>
-      )}
-      {candidates.length > 0 && (
-        <div>
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>最近候选（前 10）:</div>
-          {candidates.slice(0, 10).map(c => (
-            <div key={c.id} style={{ padding: 8, borderBottom: "1px solid var(--bg-border)" }}>
-              <div>Candidate #{c.id} | BOQ #{c.boq_item_id} | score={c.score.toFixed(2)} conf={c.confidence.toFixed(2)}</div>
-              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{c.reason}</div>
-            </div>
-          ))}
+          <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>stats: {JSON.stringify(result.stats ?? {})}</div>
         </div>
       )}
     </div>

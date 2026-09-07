@@ -6,18 +6,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
-from fastapi.testclient import TestClient
-
-from webapi.main import app
-
-
-@pytest.fixture
-def client():
-    """FastAPI TestClient"""
-    return TestClient(app)
+from unittest.mock import AsyncMock, patch
 
 
 def test_health(client):
@@ -84,7 +73,6 @@ def test_cad_metadata_ok(mock_md, client):
 
 @patch("webapi.routers.cad.cad_service.get_sheet_metadata", new_callable=AsyncMock)
 def test_cad_metadata_404(mock_md, client):
-    from fastapi import HTTPException
     mock_md.return_value = None
     r = client.get("/api/cad/metadata?sheet_id=999")
     assert r.status_code == 404
@@ -248,14 +236,20 @@ def test_jobs_get_404(client):
     assert r.status_code == 404
 
 
-@patch("webapi.routers.jobs.job_manager.submit", new_callable=AsyncMock)
+@patch("webapi.routers.jobs.job_manager.submit_by_name", new_callable=AsyncMock)
 def test_jobs_submit(mock_submit, client):
     from webapi.jobs.models import Job, JobStatus
     job = Job(id="test123", name="test", status=JobStatus.PENDING)
     mock_submit.return_value = job
-    r = client.post("/api/jobs/submit", json={"name": "test", "payload": {}})
+    r = client.post("/api/jobs/submit", json={"name": "test", "func_name": "boq.parse", "payload": {}})
     assert r.status_code == 200
     assert r.json()["id"] == "test123"
+
+@patch("webapi.routers.jobs.job_manager.submit_by_name", new_callable=AsyncMock)
+def test_jobs_submit_missing_func_name_422(mock_submit, client):
+    r = client.post("/api/jobs/submit", json={"name": "test", "payload": {}})
+    assert r.status_code == 422
+    mock_submit.assert_not_called()
 
 
 # ---------- /api/extraction ----------
@@ -403,10 +397,8 @@ def test_cad_standard_get_layer_rules(client):
 def test_cad_standard_update_rule(client, tmp_path, monkeypatch):
     """更新规则（写 tmp 目录避免污染真实文件）"""
     import json
-    from webapi.config import get_settings
 
     # 准备：复制真实规则到 tmp 目录
-    real_path = get_settings().cad_standard_dir if hasattr(get_settings(), 'cad_standard_dir') else None
     # 直接 patch routers/cad_standard._standard_dir 返回 tmp
     src = Path(__file__).parent.parent / "webapi" / "cad_standard" / "specification_rules.json"
     target = tmp_path / "specification_rules.json"

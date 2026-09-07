@@ -16,6 +16,7 @@ import os
 # module-level：初始化 app.db schema（pytest collection 阶段，所有 test 模块 import 前）
 # 避免 "no such table: llm_settings" 等表缺失错误
 from app import db as _app_db_init
+
 _app_db_init.init_db()
 
 # Phase 0 桌面端废弃（#15）后，部分旧测试引用已删的 app.ui 路径：
@@ -44,6 +45,16 @@ os.environ.setdefault("TEST_DATA_REGISTRY_PATH", "/tmp/cad-boq-test-cache/test_d
 
 
 import pytest
+
+
+@pytest.fixture
+def client():
+    """FastAPI TestClient（跨测试文件共享）"""
+    from fastapi.testclient import TestClient
+
+    from webapi.main import app
+
+    return TestClient(app)
 
 
 @pytest.fixture(autouse=True)

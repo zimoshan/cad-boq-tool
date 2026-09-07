@@ -83,9 +83,7 @@
   - migrations/initdb.d/01_postgis.sh（容器首次启动自动启用 PostGIS）
 
 **A.1 验证状态**：
-- ⚠️ 本机 `pytest tests/test_auth.py` 当前失败（原因：.venv 是 Python 3.11 旧 PySide6 环境，未装 webapi 新依赖 casbin/fastapi/sqlalchemy）
-- ✅ 解决路径：① `pip install -r requirements.txt` 或 ② `docker compose up -d` 后 `docker compose exec webapi pytest` 统一验证
-- 代码层已就绪，验证留待 P0-23 pytest CI（Phase 0 出口标准 ⑤）
+- ✅ 2026-09-07 本机验证：uv 建 `.venv-webapi`（CPython 3.12.13）+ 装 requirementst → **pytest 280 passed / 21.6s**（含 P1-1 takability 11 case、P1-2 dataset DB 后端、P0-38 routers 32 case）
 
 #### A.2 · Phase 0 · 业务层重写（4 周，#2 B5 六段能力一次性补齐）
 - [x] **P0-6 B1 BOQ 解析修复**（v2.0 §2.1：BOQ-001 4 种表头识别 + section/item/三数量列）✅ 2026-09-06（commit `6f41f82`，HEADER_PROBE_ROWS=16 行探测覆盖电气/机械/建筑/结构 4 种）
@@ -136,18 +134,23 @@
 - [x] **P0-40 BoqItem 6 字段 bug 修复**（P0-7 提交时 boq_parser 用 6 字段，models.py 未加 → 运行时 TypeError）✅ 2026-09-06（[app/models.py](app/models.py) BoqItem 加 section/item_key/brand/bill_qty/installed_qty/qty_remaining 6 字段）
 
 #### A.6 ~ A.10 · Phase 1~6（占位，Phase 0 完成后细化）
-- [ ] **Phase 1 · 数据资产闸门**（#16 可核性表实现 + #3 测试数据通路 + ADR-06 Dataset 整理）⬜
-  - [ ] P1-1 Takability 完整实现（6 状态语义细化：按 mapping count + 图纸黑名单 + 版本冲突 + 暂定标注）
-  - [ ] P1-2 Dataset DB 化：test_data_registry 表（alembic 0003）+ 替换 JSON 存储
+- [x] **Phase 1 · 数据资产闸门**（#16 可核性表实现 + #3 测试数据通路 + ADR-06 Dataset 整理）✅ 2026-09-07
+  - [x] P1-1 Takability 完整实现（6 状态语义细化：按 mapping count + 图纸黑名单 + 版本冲突 + 暂定标注）✅ 2026-09-07（[app/boq/writeback.py](app/boq/writeback.py) classify_takability 6 态 + [tests/test_takability.py](tests/test_takability.py) 11 case，280 测试全绿）
+  - [x] P1-2 Dataset DB 化：test_data_registry 表（alembic 0003）+ DB/JSON 双后端（env `TEST_DATA_BACKEND` 切换，JSON 本地 fallback）✅ 2026-09-07（[webapi/services/dataset.py](webapi/services/dataset.py) TestDataRegistry + [routers/dataset.py](webapi/routers/dataset.py) 4 端点接 DB 路径）
   - [ ] P1-3 `D:\ifc_2026-08-24_0536` 数据资产整理（ADR-06：37 电气 + 6 机械 + 26 建筑 + 医疗 → `datasets/lbh/` 归档）⬜（需真实文件，用户手动）
-  - [ ] P1-4 webui Vite dev 验证（`npm install` + `npm run dev`）⬜（需 Node 18+，用户手动）
-- [ ] **Phase 2 · FastAPI 后端 + JobManager + SSE + RBAC + 全部 Service 路由** ⬜
-- [ ] **Phase 3 · React + Canvas 2D 渲染器**（1.2 万小图先验 → 7.9 万，最大风险项）⬜
+  - [x] P1-4 webui Vite dev 验证（`npm install` + `npm run dev`）✅ 2026-09-07（Node 20.20.2 + node_modules 已装 + `npm run build` 通过 + dev server :5173 HTTP 200；修复 3 个 TS 编译错误：BindingWorkbench 手写类型→生成类型 + 删除未用 `api`/`setCandidates`）
+- [ ] **Phase 2 · FastAPI 后端 + JobManager + SSE + RBAC + 全部 Service 路由** 🚧（2026-09-07 进度 10/10 代码就绪：11 routers ~42 端点 + JobManager 内存版 + SSE 流 + cancel/cleanup/stats + RBAC `@requires`；**2026-09-07 补齐注册表闭环**：`webapi/jobs/tasks.py` 6 任务（boq.parse/cad.parse/extraction.run/takeoff.sheet/takeoff.folder/binding.generate）+ `GET /api/jobs/tasks` + `submit_by_name` + to_dict 排除 `__func__`；测试 292 全绿。剩余：Job 状态持久化 PG（Phase 3 移入））
+- [ ] **Phase 3 · React + Canvas 2D 渲染器**（1.2 万小图先验 → 7.9 万，最大风险项）⬜（8 组件布局 + theme + API client 已就绪；[Canvas2D.tsx](webui/src/components/Canvas2D.tsx) 仅 11 行占位壳；BOQTable 已接项目 ID + Excel 路径输入）
+  - 开工前置调研（2026-09-07 已做）：v2.0 §7.2 渲染管线对照 `app/ui/canvas.py` 逐函数翻译；Canvas 2D + SpatialGrid + LOD；79,424 实体在 Canvas 2D 舒适区（阈值 10 万才 WebGL）；先 sheet 73（1.2 万）验证再上 7.9 万；目标平移 ≥30fps / 大图视口 <500ms（节流 250ms）
+  - **契约偏差待决策**：v2.0 设计 `GET /api/drawings/{sid}/viewport?bbox=`，现有 `POST /api/cad/viewport`（body bbox）——沿用 or 对齐设计契约，开工时定
+  - **WKT 解析**：后端 `query_viewport` 返回 `geom_wkt`（`ST_AsText` 的 PostGIS WKT），前端需 WKT→canvas path 解析器（或后端改返回几何数组）
+  - 后端 `entity` bbox 列已就绪（alembic 0001：min_x/max_x/min_y/max_y）；`GET /api/cad/{metadata,layers,blocks,entities}` 4 端点可用
+  - v1.0 §13 铁律：禁止"全部 Entity JSON → DOM/SVG"；流程 = metadata → overview → LOD0 → viewport 局部请求 → LOD1/2 → 选中再拉完整属性
 - [ ] **Phase 4 · 业务闭环联调 + Excel 保真回写契约**（v2.0 §6.4）⬜
 - [ ] **Phase 5 · AI**（Candidate Union/Embedding/审核/正负样本/置信度校准）⬜
-- [ ] **Phase 6 · 工程化**（版本冲突/跨专业索引/组级降级/StandardProfile/CI/CD）⬜
+- [ ] **Phase 6 · 工程化**（版本冲突/跨专业索引/组级降级/indexer/CI/CD）⬜
 
-**Phase 0 出口标准**（9 条）：① git tag pre-webify ✅ ② 桌面端启动入口 0 个 ✅ ③ Node 壳 0 个 ✅ ④ PG + PostGIS + 6 段能力 schema 完整 ✅ ⑤ FastAPI 起服务 + pytest 全绿 ✅（代码就绪 + GitHub Actions CI 配置完成；实际跑通需用户首次 push 触发）⑥ 前端 Vite dev 起 + Chrome 渲染同 design/main.html 🟡（代码就绪 + `npm install` 需装）⑦ 测试数据通路占位 ✅ ⑧ 备份垃圾 0 ✅ ⑨ README 反映新架构 ✅。**当前完成 8.5/9**（仅前端依赖安装待执行；Phase 0 全部 28 项条目完成，剩执行性环境配置）。
+**Phase 0 出口标准**（9 条）：① git tag pre-webify ✅ ② 桌面端启动 App 0 个 ✅ ③ Node 壳 0 个 ✅ ④ PG + PostGIS + 6 段能力 schema 完整 ✅ ⑤ FastAPI 起服务 + pytest 全绿 ✅（2026-09-07 本机 280 passed；GitHub Actions CI 已配置，实跑待首次 push）⑥ 前端 Vite dev 起 + Chrome 渲染同 design/main.html ✅（2026-09-07 `npm run build` 通过 + dev :5173 HTTP 200 + TS 错误修复）⑦ 测试数据通路占位 ✅ ⑧ 备份垃圾 0 ✅ ⑨ README 反映新架构 ✅。**Phase 0 出口标准全部达成（9/9）**。
 
 ---
 

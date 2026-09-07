@@ -77,6 +77,18 @@ class JobManager:
         logger.info(f"Job submitted: {job.id} {name}")
         return job
 
+    async def submit_by_name(self, name: str, func_name: str, payload: dict | None = None, created_by: str = "sysadmin") -> Job:
+        """按注册表名提交真实业务任务（Phase 2：/api/jobs/submit 接线）
+
+        func_name 必须是 webapi.jobs.tasks.TASKS 中登记的键，
+        否则抛 KeyError（router 层转 404）。
+        """
+        from webapi.jobs.tasks import TASKS
+
+        if func_name not in TASKS:
+            raise KeyError(f"Unknown task: {func_name}")
+        return await self.submit(name=name, func=TASKS[func_name], payload=payload, created_by=created_by)
+
     def get(self, job_id: str) -> Job | None:
         return self._jobs.get(job_id)
 

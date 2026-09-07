@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 class JobSubmitRequest(BaseModel):
     name: str
-    func_name: str = ""  # 预留：注册的任务名（Phase 2 占位）
+    func_name: str = ""  # 注册表任务名（webapi/jobs/tasks.py TASKS），必填
     payload: dict = {}
 
 
@@ -32,6 +32,16 @@ async def list_jobs(status: str | None = None) -> dict:
 async def get_stats() -> dict:
     """按状态统计 job 数（Round 7 增强：监控/管理面板）"""
     return job_manager.stats()
+
+
+@router.get("/tasks")
+@requires("jobs:read")
+async def list_tasks() -> dict:
+    """列出可提交的任务名（func_name 注册表）"""
+    from webapi.jobs.tasks import list_task_names
+
+    names = list_task_names()
+    return {"tasks": names, "total": len(names)}
 
 
 @router.post("/cleanup")
@@ -57,13 +67,27 @@ async def get_job(job_id: str) -> dict:
 @router.post("/submit")
 @requires("jobs:write")
 async def submit_job(req: JobSubmitRequest) -> dict:
-    """提交一个 Job（Phase 2 占位：func_name 路由待 Phase 2 完整实现）"""
+    """提交一个 Job（Phase 2：按注册表 func_name 提交真实业务任务）
 
-    async def _noop(job, progress_cb):
-        progress_cb(job.progress.__class__(task_type="noop", done=1, total=1, message="ok"))
-        return {"result": "noop done"}
+    func_name 取值（webapi/jobs/tasks.py TASKS）：
+      - boq.parse        解析 BOQ Excel
+      - cad.parse         解析 CAD/DWG 文件
+      - extraction.run   工程对象提取（设备/线性/面积）
+      - takeoff.sheet     单图 takeoff（6 阶段管线）
+      - takeoff.folder    文件夹 takeoff（多图聚合）
+      - binding.generate  生成绑定候选（4 层）
+    """
+    if not req.func_name:
+        raise HTTPException(status_code=422, detail="func_name required (see webapi/jobs/tasks.py TASKS)")
+    try:
+        job = await job_manager.submit_by_name(req.name, req.func_name, req.payload, created_by="sysadmin")
+    except KeyError:
+        from webapi.jobs.tasks import list_task_names
 
-    job = await job_manager.submit(req.name, _noop, req.payload, created_by="sysadmin")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown task: {req.func_name}. Available: {', '.join(list_task_names())}",
+        ) from None
     return job.to_dict()
 
 

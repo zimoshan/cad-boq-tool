@@ -56,12 +56,14 @@ class Job:
     finished_at: datetime | None = None
 
     def to_dict(self) -> dict:
+        """序列化（排除内部 `__func__` 函数对象，避免 JSON 序列化失败）"""
+        payload = {k: v for k, v in self.payload.items() if not k.startswith("__")}
         return {
             "id": self.id,
             "name": self.name,
             "status": self.status.value,
             "progress": self.progress.to_dict(),
-            "payload": self.payload,
+            "payload": payload,
             "result": self.result,
             "error": self.error,
             "created_by": self.created_by,
