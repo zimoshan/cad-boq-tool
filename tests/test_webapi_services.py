@@ -57,11 +57,121 @@ class TestCadService:
         assert result["filename"] == "E-101.dwg"
 
     @pytest.mark.asyncio
+    async def test_list_sheets_sqlite(self):
+        """SQLite 分支：sheets 列表不含 v2.0 PG 专用列（units/drawing_type...）"""
+        result = _FakeResult(
+            [
+                _Row({"id": 73, "project_id": 25, "filename": "E-073.dwg",
+                      "status": "ready", "scale": 1.0, "entity_count": 12000,
+                      "layer_count": 74, "blocks_json": "{}"}),
+            ]
+        )
+
+        from webapi.services.cad import list_sheets
+        rows = await list_sheets(_SqliteFakeDb(result), 25)
+        assert rows[0]["entity_count"] == 12000
+        assert "units" not in rows[0]  # SQLite 不查 v2.0 PG 列
+
+    def test_bbox_overlaps_sql_sqlite_semantics(self):
+        """SQLite 分支 bbox 相交 SQL：真 sqlite3 验证选择语义
+
+        bbox 列存 JSON 数组文本 '[min_x,min_y,max_x,max_y]'；
+        json_extract 4 端点范围相交判定，真库验证相交 hit / 不相交 miss。
+        """
+        import json
+        import sqlite3
+
+        from webapi.services.cad import _bbox_overlaps_cond
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE entity (sheet_id INT, bbox TEXT)")
+        rows = [
+            # (handle, bbox, 应命中?)
+            ("inside", [10, 10, 20, 20], True),      # 完全在视口内
+            ("overlap", [0, 0, 15, 15], True),       # 与视口相交
+            ("touch", [0, 0, 0, 15], True),          # 边缘相接（>=/<= 含等号）
+            ("far_right", [200, 200, 300, 300], False),  # 视口右侧外
+            ("far_top", [50, 200, 100, 300], False),     # 上方外
+        ]
+        for h, bb, _ in rows:
+            conn.execute("INSERT INTO entity VALUES (1, ?)", (json.dumps(bb),))
+
+        sql = f"SELECT rowid FROM entity WHERE {_bbox_overlaps_cond(0, 0, 100, 100)}"
+        hits = {r[0] for r in conn.execute(sql).fetchall()}
+        expected = {i + 1 for i, (_, _, hit) in enumerate(rows) if hit}
+        assert hits == expected, f"预期命中 {expected}，实际 {hits}"
+        conn.close()
+
+    @pytest.mark.asyncio
+    async def test_query_viewport_sqlite_returns_geom(self):
+        """SQLite 分支：返回行解析 geom/bbox JSON + SQL 用 bbox json_extract"""
+        from webapi.services.cad import query_viewport
+
+        db = _SqliteFakeDb(_FakeResult([
+            _Row({"id": 1, "handle": "h1", "dxf_type": "LINE", "layer": "L1",
+                  "block_name": "", "bbox": "[0,0,10,10]",
+                  "geom_json": '{"type":"line","start":[0,0],"end":[10,10]}',
+                  "length": 10.0, "area": 0.0}),
+            _Row({"id": 2, "handle": "h2", "dxf_type": "CIRCLE", "layer": "L1",
+                  "block_name": "", "bbox": "bad-json", "geom_json": "",
+                  "length": 0.0, "area": 1.0}),
+        ]))
+
+        rows = await query_viewport(db, 1, (0, 0, 100, 100), 10)
+        assert "json_extract(bbox" in db.last_sql  # SQLite 分支 SQL
+        assert "ST_MakeEnvelope" not in db.last_sql
+        assert rows[0]["geom"]["type"] == "line"
+        assert rows[0]["bbox"] == [0, 0, 10, 10]
+        assert rows[1]["geom"] == {}      # 坏 JSON 回退空
+        assert rows[1]["bbox"] == [0, 0, 0, 0]
+
+    @pytest.mark.asyncio
     @patch("webapi.services.cad.get_sheet_metadata", return_value=None)
     async def test_get_sheet_metadata_not_found(self, mock_md):
+        """metadata 查无 → 透传 None（router 层转 404）"""
         from webapi.services.cad import get_sheet_metadata
         result = await get_sheet_metadata(db=None, sheet_id=999)
         assert result is None
+
+
+class _FakeResult:
+    """假 sqlalchemy Result（iter → rows）"""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def __iter__(self):
+        yield from self._rows
+
+
+class _SqliteDialect:
+    name = "sqlite"
+
+
+class _SqliteBind:
+    dialect = _SqliteDialect()
+
+
+class _SqliteFakeDb:
+    """假 AsyncSession：dialect=sqlite + execute 返回注入结果"""
+
+    def __init__(self, result=None):
+        self._result = result
+        self.last_sql = ""
+
+    def get_bind(self):
+        return _SqliteBind()
+
+    async def execute(self, sql, params=None):
+        self.last_sql = str(sql)
+        return self._result
+
+
+class _Row:
+    """dict-like 行（sqlalchemy Row._mapping 等价）"""
+
+    def __init__(self, vals):
+        self._mapping = {k: v for k, v in vals.items()}
 
 
 # ============================================================

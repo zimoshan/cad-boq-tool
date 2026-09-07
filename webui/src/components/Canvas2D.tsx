@@ -1,7 +1,9 @@
 import React, { useRef, useEffect, useState, useCallback } from "react";
+import { api } from "../api/client";
 
 // ---- Entity 类型 ----
 interface Entity {
+  id?: number;
   handle: string;
   dxf_type: string;
   layer: string;
@@ -10,13 +12,20 @@ interface Entity {
   geom: Record<string, unknown>;
   length?: number;
   area?: number;
-  color: number[];
+  color?: number[];
 }
 
 interface EntityData {
   entities: Entity[];
   count: number;
 }
+
+// LOD 阈值：缩放级别（像素/单位）决定绘制细节
+// scale < LOD0_SCALE  → 只画 bbox 矩形（概览）
+// scale >= LOD0_SCALE → 完整几何（细节）
+const LOD0_SCALE = 0.02;
+const VIEWPORT_DEBOUNCE_MS = 250;
+const MAX_VIEWPORT_ENTITIES = 5000;
 
 // ---- 视口状态 ----
 interface Viewport {
@@ -41,7 +50,7 @@ const DXF_COLORS: Record<string, string> = {
 };
 
 // ---- Canvas 组件 ----
-export function Canvas2D() {
+export function Canvas2D({ sheetId = 73, projectId = 25 }: { sheetId?: number; projectId?: number }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [entities, setEntities] = useState<Entity[]>([]);
   const [layers, setLayers] = useState<string[]>([]);
@@ -50,30 +59,88 @@ export function Canvas2D() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState("");
+  const [mode, setMode] = useState<"api" | "static">("api");
+  const [sheets, setSheets] = useState<{ id: number; filename: string; entity_count: number }[]>([]);
+  const [activeSheet, setActiveSheet] = useState(sheetId);
   const dragRef = useRef<{ x: number; y: number } | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const entitiesRef = useRef<Entity[]>([]);
+  entitiesRef.current = entities;
+  const layersRef = useRef<string[]>([]);
+  layersRef.current = layers;
 
-  // ---- 加载数据 ----
+  // ---- bbox → 视口参数（自动适配 canvas）----
+  const fitViewport = useCallback((es: Entity[]) => {
+    const canvas = canvasRef.current;
+    if (!canvas || es.length === 0) return;
+    const W = canvas.width;
+    const H = canvas.height;
+    const allXs = es.flatMap((e) => (e.bbox ? [e.bbox[0], e.bbox[2]] : []));
+    const allYs = es.flatMap((e) => (e.bbox ? [e.bbox[1], e.bbox[3]] : []));
+    if (allXs.length === 0) return;
+    const minX = Math.min(...allXs);
+    const maxX = Math.max(...allXs);
+    const minY = Math.min(...allYs);
+    const maxY = Math.max(...allYs);
+    const cadW = maxX - minX || 1;
+    const cadH = maxY - minY || 1;
+    const margin = 0.9;
+    const scale = Math.min((W * margin) / cadW, (H * margin) / cadH);
+    setViewport({ ox: minX - (W / scale - cadW) / 2, oy: minY - (H / scale - cadH) / 2, scale });
+  }, []);
+
+  // ---- 加载数据：优先 API（动态 viewport），失败回退静态 JSON ----
   useEffect(() => {
-    fetch("/parsed/json/v2/LBH-E-073/entities.json")
-      .then((r) => r.json())
-      .then((data: EntityData) => {
-        setEntities(data.entities);
-        const layerSet = new Set(data.entities.map((e) => e.layer));
+    let cancelled = false;
+    setLoading(true);
+
+    // API 模式：metadata → 全图 viewport
+    const loadApi = async () => {
+      try {
+        // 先请求全图 bbox（超大范围拉全图；随后用户缩放触发局部请求）
+        const bbox = { sheet_id: sheetId, min_x: -1e9, min_y: -1e9, max_x: 1e9, max_y: 1e9, limit: MAX_VIEWPORT_ENTITIES };
+        const res = await api.cad.viewport(bbox as any);
+        if (cancelled) return;
+        const items: Entity[] = (res as any).items || [];
+        setEntities(items);
+        const layerSet = new Set(items.map((e: Entity) => e.layer));
         const sorted = [...layerSet].sort();
         setLayers(sorted);
         setVisibleLayers(new Set(sorted));
+        setMode("api");
+        setInfo(`sheet ${sheetId} | ${items.length} entities (API) | ${sorted.length} layers`);
+        fitViewport(items);
+      } catch {
+        if (cancelled) return;
+        // fallback：静态 JSON（dev 无后端时）
+        try {
+          const r = await fetch(`/parsed/json/v2/LBH-E-073/entities.json`);
+          const data: EntityData = await r.json();
+          if (cancelled) return;
+          setEntities(data.entities);
+          const layerSet = new Set(data.entities.map((e) => e.layer));
+          const sorted = [...layerSet].sort();
+          setLayers(sorted);
+          setVisibleLayers(new Set(sorted));
+          setMode("static");
+          setInfo(`${data.count} entities (static) | ${sorted.length} layers`);
+          fitViewport(data.entities);
+        } catch (e2) {
+          if (!cancelled) setError(String(e2));
+        }
+      }
+      if (!cancelled) setLoading(false);
+    };
+    loadApi();
+    return () => { cancelled = true; };
+  }, [activeSheet, fitViewport]);
 
-        // 计算全局 bbox → 自动居中
-        const allXs = data.entities.flatMap((e) => [e.bbox[0], e.bbox[2]]);
-        const allYs = data.entities.flatMap((e) => [e.bbox[1], e.bbox[3]]);
-        const minX = Math.min(...allXs);
-        const minY = Math.min(...allYs);
-        setViewport({ ox: minX, oy: minY, scale: 1 });
-        setInfo(`${data.count} entities | ${sorted.length} layers`);
-        setLoading(false);
-      })
-      .catch((e) => { setError(String(e)); setLoading(false); });
-  }, []);
+  // ---- 图纸列表（图纸选择器）----
+  useEffect(() => {
+    api.cad.sheets(projectId)
+      .then((res) => { setSheets((res as any).items || []); })
+      .catch(() => { /* API 失败则不显示选择器（静态模式） */ });
+  }, [projectId]);
 
   // ---- 绘制 ----
   const draw = useCallback(() => {
@@ -94,6 +161,7 @@ export function Canvas2D() {
 
     // 过滤可见图层
     const visible = entities.filter((e) => visibleLayers.has(e.layer));
+    const lod0 = scale < LOD0_SCALE; // LOD0：概览（只画 bbox）
 
     // 绘制
     for (const e of visible) {
@@ -113,6 +181,12 @@ export function Canvas2D() {
 
       // 跳过屏幕外的实体（视口裁剪）
       if (sx + sw < 0 || sx > W || sy + sh < 0 || sy > H) continue;
+
+      // LOD0：远缩只画 bbox 矩形（性能）
+      if (lod0) {
+        ctx.strokeRect(sx, sy, Math.max(sw, 1), Math.max(sh, 1));
+        continue;
+      }
 
       // 根据 dxf_type 绘制
       switch (e.dxf_type) {
@@ -229,6 +303,41 @@ export function Canvas2D() {
 
   useEffect(() => { draw(); }, [draw, viewport]);
 
+  // ---- API 模式：视口变化后 debounce 拉取可视范围实体（局部请求）----
+  useEffect(() => {
+    if (mode !== "api") return;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const W = canvas.width;
+      const H = canvas.height;
+      // 当前屏幕视口 → CAD 世界 bbox
+      const worldMinX = viewport.ox;
+      const worldMinY = viewport.oy;
+      const worldMaxX = viewport.ox + W / viewport.scale;
+      const worldMaxY = viewport.oy + H / viewport.scale;
+      try {
+        const res = await api.cad.viewport({
+          sheet_id: sheetId, min_x: worldMinX, min_y: worldMinY,
+          max_x: worldMaxX, max_y: worldMaxY, limit: MAX_VIEWPORT_ENTITIES,
+        });
+        const items: Entity[] = (res as any).items || [];
+        setEntities(items);
+        // 动态图层：合并新图层（不重置用户选择）
+        setLayers((prev) => {
+          const merged = new Set(prev);
+          items.forEach((e: Entity) => merged.add(e.layer));
+          return [...merged].sort();
+        });
+        setInfo(`sheet ${sheetId} | viewport ${items.length} entities | ${layersRef.current.length} layers`);
+      } catch {
+        // 静默：保留旧实体（网络抖动不闪烁）
+      }
+    }, VIEWPORT_DEBOUNCE_MS);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [viewport, sheetId, mode]);
+
   // ---- 鼠标交互（拖拽平移 + 滚轮缩放）----
   const handleMouseDown = (e: React.MouseEvent) => { dragRef.current = { x: e.clientX, y: e.clientY }; };
   const handleMouseMove = (e: React.MouseEvent) => {
@@ -299,7 +408,25 @@ export function Canvas2D() {
         ))}
       </div>
       {/* Canvas 主体 */}
-      <div style={{ flex: 1, position: "relative" }}>
+      <div style={{ flex: 1, position: "relative", display: "flex", flexDirection: "column" }}>
+        {/* 图纸选择器工具栏 */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 8px", borderBottom: "1px solid var(--bg-border)", fontSize: 11, color: "var(--text-secondary)" }}>
+          <span>🗺 图纸:</span>
+          <select
+            value={activeSheet}
+            onChange={(e) => { setActiveSheet(Number(e.target.value)); setLoading(true); }}
+            style={{ background: "var(--bg-secondary)", color: "var(--text-primary)", border: "1px solid var(--bg-border)", borderRadius: 3, padding: "2px 6px", fontSize: 11, maxWidth: 320 }}
+          >
+            {sheets.length === 0 && <option value={sheetId}>Sheet {sheetId}（API 不可用）</option>}
+            {sheets.map((s) => (
+              <option key={s.id} value={s.id}>
+                #{s.id} {s.filename} ({s.entity_count?.toLocaleString()} 实体)
+              </option>
+            ))}
+          </select>
+          {mode === "api" ? <span style={{ color: "#66aa88" }}>● API</span> : <span style={{ color: "#ccaa44" }}>○ 静态</span>}
+        </div>
+        <div style={{ flex: 1, position: "relative" }}>
         <canvas
           ref={canvasRef}
           style={{ display: "block", cursor: dragRef.current ? "grabbing" : "grab" }}
@@ -312,7 +439,8 @@ export function Canvas2D() {
         <div style={{ position: "absolute", bottom: 8, left: 8, fontSize: 10, color: "var(--text-muted)", background: "rgba(0,0,0,0.5)", padding: "2px 6px", borderRadius: 3 }}>
           {info} | scale={viewport.scale.toFixed(4)}
         </div>
-      </div>
+        </div>{/* canvas 容器 end */}
+      </div>{/* canvas 主体 column end */}
     </div>
   );
 }

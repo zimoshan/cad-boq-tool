@@ -41,3 +41,8 @@ webapi/auth/casbin_policy.csv
 webapi/__pycache__/
 # 临时测试输出
 /tmp/cad-boq-test-*
+/datasets
+# tsc/vite 构建产物（tsbuildinfo + 生成的 js/d.ts）
+webui/*.tsbuildinfo
+webui/vite.config.js
+webui/vite.config.d.ts

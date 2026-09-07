@@ -11,15 +11,17 @@ from webapi.config import get_settings
 
 _settings = get_settings()
 
-# asyncpg engine：线程池友好 + WAL-ready
-engine: AsyncEngine = create_async_engine(
-    _settings.database_url,
-    echo=(_settings.app_env == "dev"),
-    pool_size=10,
-    max_overflow=20,
-    pool_pre_ping=True,
-    pool_recycle=3600,
-)
+# asyncpg（PG 生产）：线程池友好 + WAL-ready
+# sqlite+aiosqlite（本地开发）：不支持 pool_size/max_overflow（NullPool），跳过池参数
+_engine_kwargs: dict[str, Any] = {
+    "echo": (_settings.app_env == "dev"),
+}
+if not _settings.database_url.startswith("sqlite"):
+    _engine_kwargs.update(
+        pool_size=10, max_overflow=20, pool_pre_ping=True, pool_recycle=3600
+    )
+
+engine: AsyncEngine = create_async_engine(_settings.database_url, **_engine_kwargs)
 
 async_session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
     engine, class_=AsyncSession, expire_on_commit=False

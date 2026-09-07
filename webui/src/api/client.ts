@@ -53,6 +53,8 @@ export const api = {
       }),
     metadata: (sheetId: number) =>
       request<Record<string, unknown>>(`/cad/metadata?sheet_id=${sheetId}`),
+    sheets: (projectId: number) =>
+      request<{ items: any[]; total: number }>(`/cad/sheets?project_id=${projectId}`),
     layers: (sheetId: number) =>
       request<{ items: any[]; total: number }>(`/cad/layers?sheet_id=${sheetId}`),
     blocks: (sheetId: number) =>

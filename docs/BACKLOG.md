@@ -140,12 +140,16 @@
   - [ ] P1-3 `D:\ifc_2026-08-24_0536` 数据资产整理（ADR-06：37 电气 + 6 机械 + 26 建筑 + 医疗 → `datasets/lbh/` 归档）⬜（需真实文件，用户手动）
   - [x] P1-4 webui Vite dev 验证（`npm install` + `npm run dev`）✅ 2026-09-07（Node 20.20.2 + node_modules 已装 + `npm run build` 通过 + dev server :5173 HTTP 200；修复 3 个 TS 编译错误：BindingWorkbench 手写类型→生成类型 + 删除未用 `api`/`setCandidates`）
 - [x] **Phase 2 · FastAPI 后端 + JobManager + SSE + RBAC + 全部 Service 路由** ✅ 2026-09-07（commit `4a40174`：11 routers ~42 端点 + JobManager 内存版 + SSE 流 + cancel/cleanup/stats + RBAC `@requires`；**任务注册表闭环**：`webapi/jobs/tasks.py` 6 任务 + `GET /api/jobs/tasks` + `submit_by_name` + to_dict 排除 `__func__`；测试 292 全绿；**剩余 Job 状态持久化 PG 移入 Phase 4**）
-- [ ] **Phase 3 · React + Canvas 2D 渲染器**（1.2 万小图先验 → 7.9 万，最大风险项）⬜（8 组件布局 + theme + API client 已就绪；[Canvas2D.tsx](webui/src/components/Canvas2D.tsx) 仅 11 行占位壳；BOQTable 已接项目 ID + Excel 路径输入）
+- [ ] **Phase 3 · React + Canvas 2D 渲染器**（1.2 万小图先验 → 7.9 万，最大风险项）🚧（2026-09-07：Canvas2D API 模式 + LOD + 图纸选择器已落地，剩大图纸性能实测 + 观感验收）
   - 开工前置调研（2026-09-07 已做）：v2.0 §7.2 渲染管线对照 `app/ui/canvas.py` 逐函数翻译；Canvas 2D + SpatialGrid + LOD；79,424 实体在 Canvas 2D 舒适区（阈值 10 万才 WebGL）；先 sheet 73（1.2 万）验证再上 7.9 万；目标平移 ≥30fps / 大图视口 <500ms（节流 250ms）
-  - **契约偏差待决策**：v2.0 设计 `GET /api/drawings/{sid}/viewport?bbox=`，现有 `POST /api/cad/viewport`（body bbox）——沿用 or 对齐设计契约，开工时定
-  - **WKT 解析**：后端 `query_viewport` 返回 `geom_wkt`（`ST_AsText` 的 PostGIS WKT），前端需 WKT→canvas path 解析器（或后端改返回几何数组）
-  - 后端 `entity` bbox 列已就绪（alembic 0001：min_x/max_x/min_y/max_y）；`GET /api/cad/{metadata,layers,blocks,entities}` 4 端点可用
-  - v1.0 §13 铁律：禁止"全部 Entity JSON → DOM/SVG"；流程 = metadata → overview → LOD0 → viewport 局部请求 → LOD1/2 → 选中再拉完整属性
+  - **契约偏差决策**：沿用 `POST /api/cad/viewport`（body bbox）——前端 client + 后端双引擎已按此对齐，不迁移到 v2.0 的 `GET /api/drawings/{sid}/viewport`
+  - **WKT 解析决策**：后端 `query_viewport` 双引擎返回**几何数组**（PG 分支 `ST_AsText(geometry) AS geom_wkt` 保留；SQLite 分支返回 `geom_json` 已解析为 `geom` 对象），前端直接消费 `geom` 结构，**不需要** WKT→canvas parser ✅（[webapi/services/cad.py](webapi/services/cad.py) SQLite 分支 `query_viewport`）
+  - [x] **P3-1 backend 双引擎视口查询**（PG/PostGIS `geometry && ST_MakeEnvelope` + SQLite `json_extract(bbox)` 范围相交；`get_sheet_metadata` 双 schema 兼容 PG 全列 / SQLite 基础列）✅ 2026-09-07（[webapi/services/cad.py](webapi/services/cad.py)：`_bbox_overlaps_cond`/`_dialect_is_pg`/`query_viewport`/`get_sheet_metadata` + [webapi/db/session.py](webapi/db/session.py) SQLite 池参数跳过）
+  - [x] **P3-2 `GET /api/cad/sheets` 图纸列表端点** + client `sheets()` ✅ 2026-09-07（[webapi/routers/cad.py](webapi/routers/cad.py) + [webui/src/api/client.ts](webui/src/api/client.ts)）
+  - [x] **P3-3 [Canvas2D.tsx](webui/src/components/Canvas2D.tsx) API 模式**（sheets 下拉"🗺 图纸" + fitViewport 首实体 bbox + LOD0 缩放 bbox 矩形 + 视口 debounce 250ms + API 失败静态 fallback `/parsed/json/v2/...` + ●API/○静态 模式指示）✅ 2026-09-07
+  - [ ] P3-4 大图性能实测（sheet 74，40,513 实体 / 75 79,424 级：平移 fps + 视口 <500ms + LOD0 矩形先行）⬜
+  - [ ] P3-5 观感验收（颜色/线宽/选中高亮/缩放平滑）⬜
+  - v1.0 §13 铁律：禁止"全部 Entity JSON → DOM/SVG"；流程：metadata → 图 → LOD0 → viewport 局部请求 → LOD1/2 → 选中再拉完整属性（已实现 LOD0 bbox 先行 + 视口请求）
 - [ ] **Phase 4 · 业务闭环联调 + Excel 保真回写契约**（v2.0 §6.4）🚧（2026-09-07：W1-W6 核心回写已落地，剩业务闭环联调）
   - W1 保公式加载 `data_only=False` ✅（`app/boq/writeback.py` `writeback_to_excel()`）
   - W2 只写新增列（max_col+1 / 已有 measured_qty 列复用幂等），原表列零改动 ✅

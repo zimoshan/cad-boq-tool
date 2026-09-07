@@ -15,37 +15,32 @@ dependencies = [
     "fastapi>=0.115.0,<0.116.0",
     "uvicorn[standard]>=0.30.0,<0.32.0",
     "python-multipart>=0.0.9",                # 文件上传
-
     # 数据 + ORM
     "sqlalchemy[asyncio]>=2.0.30,<2.1.0",   # 2.x async
     "asyncpg>=0.29.0",                        # PG async 驱动
     "psycopg[binary]>=3.1.0",                 # PG sync 驱动（alembic 迁移用）
     "alembic>=1.13.0",                        # 迁移工具
     "geoalchemy2>=0.15.0",                    # PostGIS SQLAlchemy 集成
-
     # 数据模型 + 配置
     "pydantic>=2.7.0,<3.0.0",
     "pydantic-settings>=2.4.0",
     "python-dotenv>=1.0.1",
-
     # 鉴权（Casbin + RuoYi 风格 RBAC）
     "casbin>=1.35.0",                         # RBAC 策略引擎
     "passlib[bcrypt]>=1.7.4",                 # 密码 hash
     "python-jose[cryptography]>=3.3.0",       # JWT（预留，当前免登录）
-
     # CAD 解析（业务层，保留）
     "ezdxf>=1.4.0,<2.0.0",
     "ezdwg>=0.5.0",                           # Rust 内核直读
     "shapely>=2.0.0",                         # 几何（Web GLOD 后续用）
-
     # Excel + LLM + 嵌入（业务层）
     "openpyxl>=3.1.0",
     "ollama>=0.3.0",
     "openai>=1.40.0",
-
     # 工具
     "pyarrow>=16.0.0",                        # B3 块几何外置 parquet
     "structlog>=24.4.0",                     # R6.3 结构化日志 + access log
+    "aiosqlite>=0.22.1",
 ]
 
 [project.optional-dependencies]

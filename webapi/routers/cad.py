@@ -30,6 +30,14 @@ async def viewport(query: ViewportQuery, db: AsyncSession = Depends(get_db)) -> 
 
 
 # v1.0 §13 4 端点
+@router.get("/sheets")
+@requires("cad:read")
+async def get_sheets(project_id: int, db: AsyncSession = Depends(get_db)) -> dict:
+    """Phase 3：项目下图纸列表（图纸选择器）"""
+    rows = await cad_service.list_sheets(db, project_id)
+    return {"items": rows, "total": len(rows)}
+
+
 @router.get("/metadata")
 @requires("cad:read")
 async def get_metadata(sheet_id: int, db: AsyncSession = Depends(get_db)) -> dict:
