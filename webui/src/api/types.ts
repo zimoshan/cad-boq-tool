@@ -81,6 +81,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/cad/sheets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Sheets
+         * @description Phase 3：项目下图纸列表（图纸选择器）
+         */
+        get: operations["get_sheets_api_cad_sheets_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/cad/metadata": {
         parameters: {
             query?: never;
@@ -153,6 +173,26 @@ export interface paths {
          * @description v1.0 §13 GET /api/cad/entities：分页列 entity（layer/block/dxf_type 过滤）
          */
         get: operations["get_entities_api_cad_entities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/binding/candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Candidates
+         * @description Phase 4：候选列表（join BOQ/工程对象展示字段，status 过滤）
+         */
+        get: operations["candidates_api_binding_candidates_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -255,6 +295,27 @@ export interface paths {
          * @description 回写 measured_qty（B5 S7 Excel 保真回写，P0-15 落实）
          */
         post: operations["writeback_api_boq_writeback_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/boq/writeback-to-excel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Writeback To Excel
+         * @description P4 v1.0 §6.4 W1-W6 Excel 保真回写：
+         *     W1 保公式加载 → W2 只写新增列 → W3 新表头样式 → W4 完整性校验 → W5 锁文件回退 → W6 审计
+         */
+        post: operations["writeback_to_excel_api_boq_writeback_to_excel_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -429,6 +490,68 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/jobs/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Stats
+         * @description 按状态统计 job 数（Round 7 增强：监控/管理面板）
+         */
+        get: operations["get_stats_api_jobs_stats_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Tasks
+         * @description 列出可提交的任务名（func_name 注册表）
+         */
+        get: operations["list_tasks_api_jobs_tasks_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/cleanup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cleanup Jobs
+         * @description 清理旧 completed/failed/cancelled jobs（避免内存无限增长）
+         *
+         *     keep_completed: 保留最近 N 个 completed（默认 50）
+         */
+        post: operations["cleanup_jobs_api_jobs_cleanup_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/jobs/{job_id}": {
         parameters: {
             query?: never;
@@ -457,7 +580,15 @@ export interface paths {
         put?: never;
         /**
          * Submit Job
-         * @description 提交一个 Job（Phase 2 占位：func_name 路由待 Phase 2 完整实现）
+         * @description 提交一个 Job（Phase 2：按注册表 func_name 提交真实业务任务）
+         *
+         *     func_name 取值（webapi/jobs/tasks.py TASKS）：
+         *       - boq.parse        解析 BOQ Excel
+         *       - cad.parse         解析 CAD/DWG 文件
+         *       - extraction.run   工程对象提取（设备/线性/面积）
+         *       - takeoff.sheet     单图 takeoff（6 阶段管线）
+         *       - takeoff.folder    文件夹 takeoff（多图聚合）
+         *       - binding.generate  生成绑定候选（4 层）
          */
         post: operations["submit_job_api_jobs_submit_post"];
         delete?: never;
@@ -1303,6 +1434,65 @@ export interface components {
              */
             failed: number;
         };
+        /**
+         * WritebackToExcelRequest
+         * @description P4 v1.0 §6.4：Excel 保真回写请求（打开原 Excel，新增列写 measured_qty）
+         */
+        WritebackToExcelRequest: {
+            /** Project Id */
+            project_id: number;
+            /**
+             * Source File Path
+             * @description BOQ 源 Excel 绝对路径（xlsx/xls）
+             */
+            source_file_path: string;
+            /**
+             * Project Scale
+             * @default 1
+             */
+            project_scale: number;
+        };
+        /**
+         * WritebackToExcelResponse
+         * @description P4 v1.0 §6.4：Excel 保真回写响应
+         */
+        WritebackToExcelResponse: {
+            /** Project Id */
+            project_id: number;
+            /** Source File Path */
+            source_file_path: string;
+            /** Output Path */
+            output_path: string;
+            /** Written */
+            written: number;
+            /**
+             * Failed
+             * @default 0
+             */
+            failed: number;
+            /**
+             * Total Items
+             * @default 0
+             */
+            total_items: number;
+            /**
+             * Verified
+             * @default false
+             */
+            verified: boolean;
+            /**
+             * Target Col
+             * @default 0
+             */
+            target_col: number;
+            /**
+             * File Sha256
+             * @default
+             */
+            file_sha256: string;
+            /** Integrity */
+            integrity?: Record<string, never>;
+        };
     };
     responses: never;
     parameters: never;
@@ -1397,6 +1587,37 @@ export interface operations {
                 "application/json": components["schemas"]["ViewportQuery"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_sheets_api_cad_sheets_get: {
+        parameters: {
+            query: {
+                project_id: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -1520,6 +1741,39 @@ export interface operations {
                 dxf_type?: string | null;
                 limit?: number;
                 offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    candidates_api_binding_candidates_get: {
+        parameters: {
+            query: {
+                project_id: number;
+                status?: string | null;
+                limit?: number;
             };
             header?: never;
             path?: never;
@@ -1699,6 +1953,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WritebackResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    writeback_to_excel_api_boq_writeback_to_excel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WritebackToExcelRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WritebackToExcelResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1952,6 +2239,77 @@ export interface operations {
         parameters: {
             query?: {
                 status?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_stats_api_jobs_stats_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+        };
+    };
+    list_tasks_api_jobs_tasks_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+        };
+    };
+    cleanup_jobs_api_jobs_cleanup_post: {
+        parameters: {
+            query?: {
+                keep_completed?: number;
             };
             header?: never;
             path?: never;

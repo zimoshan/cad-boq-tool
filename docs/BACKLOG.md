@@ -150,7 +150,7 @@
   - [ ] P3-4 大图性能实测（sheet 74，40,513 实体 / 75 79,424 级：平移 fps + 视口 <500ms + LOD0 矩形先行）⬜
   - [ ] P3-5 观感验收（颜色/线宽/选中高亮/缩放平滑）⬜
   - v1.0 §13 铁律：禁止"全部 Entity JSON → DOM/SVG"；流程：metadata → 图 → LOD0 → viewport 局部请求 → LOD1/2 → 选中再拉完整属性（已实现 LOD0 bbox 先行 + 视口请求）
-- [ ] **Phase 4 · 业务闭环联调 + Excel 保真回写契约**（v2.0 §6.4）🚧（2026-09-07：W1-W6 核心回写已落地，剩业务闭环联调）
+- [ ] **Phase 4 · 业务闭环联调 + Excel 保真回写契约**（v2.0 §6.4）🚧（2026-09-07：W1-W6 核心回写 ✅ + 闭环 UI 打通 ✅，剩 锁文件人工验收 + 大图性能）
   - W1 保公式加载 `data_only=False` ✅（`app/boq/writeback.py` `writeback_to_excel()`）
   - W2 只写新增列（max_col+1 / 已有 measured_qty 列复用幂等），原表列零改动 ✅
   - W3 新增表头新样式对象（不克隆 StyleProxy）✅
@@ -160,7 +160,12 @@
   - 端点 `POST /api/boq/writeback-to-excel` + service `writeback_to_original_excel` + schema `WritebackToExcel{Request,Response}` ✅
   - 测试 `tests/test_phase4_writeback.py`（13 case：W1-W6 单条 + 行匹配/幂等/边界）+ router 2 case；**全量 307 passed**（292+15）✅
   - 真实文件验收：`BOQ-004_Structural_回填.xlsx`（17 项）→ 探测表头 row 9 → 新增 P 列 → 17/17 写入 → verified=True（8 公式/19 合并/冻结 A10 保留）→ 幂等复用 ✅
-  - 剩余：业务闭环联调（解析→绑定→计量→回写 UI 打通）+ 锁文件人工验收
+  - [x] P4-1 `GET /api/binding/candidates` 候选列表端点（join BOQ/工程对象展示字段 + status 过滤 + 表缺失容错 []) ✅ 2026-09-07（[webapi/services/binding.py](webapi/services/binding.py) `list_binding_candidates` + [webapi/routers/binding.py](webapi/routers/binding.py)）
+  - [x] P4-2 [BindingWorkbench.tsx](webui/src/components/BindingWorkbench.tsx) 候选列表 + 确认/拒绝按钮 + 状态筛选/刷新 ✅ 2026-09-07（真库 7000+ 候选验证）
+  - [x] P4-3 [MeasurementPanel.tsx](webui/src/components/MeasurementPanel.tsx) takeoff 运行表单（单图/文件夹）+ 结果结构化展示 ✅ 2026-09-07
+  - [x] P4-4 [BOQTable.tsx](webui/src/components/BOQTable.tsx) "↩ 回写 Excel" 按钮 + W1-W6 完整性摘要（written/verified/integrity/SHA/target_col）✅ 2026-09-07
+  - [x] P4-5 闭环实操验收：`BOQ-004_Structural_回填.xlsx` 副本 → writeback-to-excel → **19/19 写入 verified=True**（8 公式/19 合并/冻结 A10 diff=0）+ client `writebackToExcel` 方法 ✅ 2026-09-07
+  - 剩余：锁文件人工验收（W5 回退 `_takeoff/`）+ 大图（sheet 74/75）性能实测
 - [ ] **Phase 5 · AI**（Candidate Union/Embedding/审核/正负样本/置信度校准）⬜
 - [ ] **Phase 6 · 工程化**（版本冲突/跨专业索引/组级降级/indexer/CI/CD）⬜
 

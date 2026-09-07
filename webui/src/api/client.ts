@@ -79,6 +79,10 @@ export const api = {
       request<Record<string, unknown>>("/binding/reject", {
         method: "POST", body: JSON.stringify(body),
       }),
+    candidates: (projectId: number, status?: string, limit: number = 500) => {
+      const qs = new URLSearchParams({ project_id: String(projectId), limit: String(limit), ...(status ? { status } : {}) }).toString();
+      return request<{ items: any[]; total: number }>(`/binding/candidates?${qs}`);
+    },
   },
 
   // BOQ
@@ -89,6 +93,10 @@ export const api = {
       }),
     writeback: (body: components["schemas"]["WritebackRequest"]) =>
       request<components["schemas"]["WritebackResponse"]>("/boq/writeback", {
+        method: "POST", body: JSON.stringify(body),
+      }),
+    writebackToExcel: (body: components["schemas"]["WritebackToExcelRequest"]) =>
+      request<components["schemas"]["WritebackToExcelResponse"]>("/boq/writeback-to-excel", {
         method: "POST", body: JSON.stringify(body),
       }),
     writebackAudited: (body: { project_id: number; project_scale?: number; source_file_path: string }) =>

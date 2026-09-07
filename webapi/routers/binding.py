@@ -19,6 +19,19 @@ from webapi.services import binding as binding_service
 router = APIRouter(prefix="/api/binding", tags=["binding"])
 
 
+@router.get("/candidates")
+@requires("binding:read")
+async def candidates(
+    project_id: int,
+    status: str | None = None,
+    limit: int = 500,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Phase 4：候选列表（join BOQ/工程对象展示字段，status 过滤）"""
+    rows = await binding_service.list_binding_candidates(db, project_id, status, limit)
+    return {"items": rows, "total": len(rows)}
+
+
 @router.post("/generate", response_model=GenerateCandidatesResponse)
 @requires("binding:generate")
 async def generate(req: GenerateCandidatesRequest, db: AsyncSession = Depends(get_db)) -> GenerateCandidatesResponse:

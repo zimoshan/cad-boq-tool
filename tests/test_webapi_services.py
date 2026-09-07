@@ -199,6 +199,38 @@ class TestBindingService:
         assert result["status"] == "ACCEPTED"
 
     @pytest.mark.asyncio
+    async def test_list_candidates_returns_join_rows(self):
+        """Phase 4：候选列表返回 join 展示字段（eo_block/boq_description/boq_code）"""
+        from webapi.services.binding import list_binding_candidates
+
+        db = MagicMock()
+        db.execute = AsyncMock(return_value=_FakeResult([
+            _Row({"id": 1, "project_id": 25, "engineering_object_id": 10, "boq_item_id": 5,
+                  "method": "RULE", "score": 0.3, "confidence": 0.3, "reason": "x",
+                  "status": "PENDING", "created_at": "2026-09-07",
+                  "eo_tag": "", "eo_block": "led block", "boq_description": "LED PROJECTOR",
+                  "boq_code": "item-262", "boq_unit": "piece"}),
+        ]))
+        rows = await list_binding_candidates(db, 25)
+        assert rows[0]["eo_block"] == "led block"
+        assert rows[0]["boq_description"] == "LED PROJECTOR"
+        assert "boq_code" in rows[0]
+        # status 过滤传递
+        await list_binding_candidates(db, 25, status="ACCEPTED")
+        sql = str(db.execute.call_args[0][0])
+        assert "bc.status = :status" in sql
+
+    @pytest.mark.asyncio
+    async def test_list_candidates_table_missing_returns_empty(self):
+        """binding_candidate 表缺失（fresh 库）→ 返回 [] 而非抛异常"""
+        from webapi.services.binding import list_binding_candidates
+
+        db = MagicMock()
+        db.execute = AsyncMock(side_effect=Exception("no such table: binding_candidate"))
+        rows = await list_binding_candidates(db, 25)
+        assert rows == []
+
+    @pytest.mark.asyncio
     @patch("webapi.services.binding._reject_binding")
     async def test_reject_binding(self, mock_reject):
         mock_reject.return_value = {"status": "REJECTED"}

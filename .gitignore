@@ -46,3 +46,5 @@ webapi/__pycache__/
 webui/*.tsbuildinfo
 webui/vite.config.js
 webui/vite.config.d.ts
+# openapi-typescript 生成产物（npm run typegen:full 重新生成）
+/openapi.json

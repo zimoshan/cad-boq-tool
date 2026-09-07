@@ -88,6 +88,40 @@ async def generate_candidates_for_project(
         raise ServiceError(f"Generate candidates failed: {e}", code="binding_generate_error") from e
 
 
+async def list_binding_candidates(
+    db: AsyncSession,
+    project_id: int,
+    status: str | None = None,
+    limit: int = 500,
+) -> list[dict[str, Any]]:
+    """Phase 4：候选列表（UI 确认/拒绝工作台用）
+
+    join engineering_object / boq_item 取展示字段（tag/block_name/description/code）；
+    表不存在或列缺失 → 返回 []（跨 schema 容错，同双引擎策略）。
+    """
+    sql = """
+        SELECT bc.id, bc.project_id, bc.engineering_object_id, bc.boq_item_id,
+               bc.method, bc.score, bc.confidence, bc.reason, bc.status, bc.created_at,
+               eo.tag AS eo_tag, eo.block_name AS eo_block,
+               bi.description AS boq_description, bi.code AS boq_code, bi.unit AS boq_unit
+        FROM binding_candidate bc
+        LEFT JOIN engineering_object eo ON eo.id = bc.engineering_object_id
+        LEFT JOIN boq_item bi ON bi.id = bc.boq_item_id
+        WHERE bc.project_id = :pid
+    """
+    args: dict[str, Any] = {"pid": project_id}
+    if status:
+        sql = sql + " AND bc.status = :status"
+        args["status"] = status
+    sql += f" ORDER BY bc.id DESC LIMIT {int(limit)}"
+    try:
+        result = await db.execute(text(sql), args)
+        return [dict(row._mapping) for row in result]
+    except Exception:
+        # binding_candidate 表缺失（fresh sqlite / PG 未迁移）→ 空列表
+        return []
+
+
 async def confirm_binding(
     db: AsyncSession,
     candidate_id: int,

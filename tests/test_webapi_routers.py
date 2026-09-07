@@ -130,6 +130,32 @@ def test_binding_reject(mock_reject, client):
     assert r.status_code == 200
 
 
+@patch("webapi.routers.binding.binding_service.list_binding_candidates", new_callable=AsyncMock)
+def test_binding_candidates(mock_list, client):
+    """Phase 4：候选列表端点（UI 确认/拒绝工作台）"""
+    mock_list.return_value = [
+        {"id": 1, "project_id": 25, "engineering_object_id": 10, "boq_item_id": 5,
+         "method": "RULE", "score": 0.3, "confidence": 0.3, "reason": "x", "status": "PENDING",
+         "created_at": "", "eo_tag": "", "eo_block": "block A", "boq_description": "LED",
+         "boq_code": "item-1", "boq_unit": "piece"},
+    ]
+    r = client.get("/api/binding/candidates?project_id=25")
+    assert r.status_code == 200
+    assert r.json()["total"] == 1
+    assert r.json()["items"][0]["status"] == "PENDING"
+    mock_list.assert_awaited_once_with(mock_list.call_args.args[0], 25, None, 500)
+
+
+@patch("webapi.routers.binding.binding_service.list_binding_candidates", new_callable=AsyncMock)
+def test_binding_candidates_status_filter(mock_list, client):
+    """status 过滤透传"""
+    mock_list.return_value = []
+    r = client.get("/api/binding/candidates?project_id=25&status=REJECTED")
+    assert r.status_code == 200
+    assert r.json()["total"] == 0
+    mock_list.assert_awaited_once_with(mock_list.call_args.args[0], 25, "REJECTED", 500)
+
+
 # ---------- /api/boq ----------
 
 @patch("webapi.routers.boq.boq_service.parse_boq_excel", new_callable=AsyncMock)
