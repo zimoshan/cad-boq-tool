@@ -78,6 +78,28 @@ async def writeback_quantities(
         raise ServiceError(f"Writeback failed: {e}", code="boq_writeback_error") from e
 
 
+async def writeback_to_original_excel(
+    db: AsyncSession,
+    project_id: int,
+    source_file_path: str,
+    project_scale: float = 1.0,
+) -> dict[str, Any]:
+    """P4 v1.0 §6.4：Excel 保真回写 W1-W6（打开原 Excel + 新增列 + 校验）
+
+    包装 app/boq/writeback.writeback_to_excel（file 级保真，不新建报表文件）。
+    """
+    from app.boq.writeback import writeback_to_excel
+
+    try:
+        return writeback_to_excel(source_file_path, project_id, project_scale)
+    except FileNotFoundError:
+        raise NotFoundError("BOQ excel file", source_file_path) from None
+    except PermissionError:
+        raise ServiceError(f"BOQ excel 被占用且回退 _takeoff/ 失败: {source_file_path}", code="boq_writeback_excel_locked") from None
+    except Exception as e:
+        raise ServiceError(f"Excel writeback failed: {e}", code="boq_writeback_excel_error") from e
+
+
 async def export_boq_to_excel(
     db: AsyncSession,
     project_id: int,

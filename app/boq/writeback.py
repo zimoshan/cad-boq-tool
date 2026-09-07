@@ -187,3 +187,178 @@ def reset_measured_qty(project_id: int) -> int:
     with db.get_conn() as conn:
         cur = conn.execute("UPDATE boq_item SET measured_qty=0 WHERE project_id=?", (project_id,))
         return cur.rowcount
+
+
+# =============================================================================
+# W1-W6 Excel 保真回写（v2.0 §6.4，Phase 4）
+# =============================================================================
+
+MEASURED_COL_TEXT = "measured_qty"  # 新增列表头（已存在则复用，幂等）
+
+
+def _count_formulas(ws) -> int:
+    """统计工作表公式数（cell.value 以 '=' 开头）—— W4 完整性校验用"""
+    n = 0
+    for row in ws.iter_rows():
+        for cell in row:
+            if isinstance(cell.value, str) and cell.value.startswith("="):
+                n += 1
+    return n
+
+
+def _verify_integrity(ws, snapshot_meta: dict, snapshot_cells: dict, target_col: int) -> dict:
+    """W4：保存前校验 —— 公式数/合并格/冻结窗格与写前一致，且原列值 diff=0
+
+    Args:
+        ws: openpyxl worksheet（已写完新列）
+        snapshot_meta: 写前 {formula_count, merged_ranges, freeze_panes}
+        snapshot_cells: 写前 {col_idx: [r1..rN 的值]}（仅原列）
+        target_col: 本次写入的新列（跳过对比；新列允许变化）
+    Returns:
+        {"ok", "formula_count", "merged_ranges", "freeze_panes", "diffs"}
+    """
+    actual = {
+        "formula_count": _count_formulas(ws),
+        "merged_ranges": len(ws.merged_cells.ranges),
+        "freeze_panes": ws.freeze_panes,
+    }
+    diffs = []
+    for key, now in actual.items():
+        if snapshot_meta.get(key) != now:
+            diffs.append(f"{key}: {snapshot_meta.get(key)} -> {now}")
+    # 原列 diff=0（只允许 target_col 变化）
+    for col, vals in snapshot_cells.items():
+        if col == target_col:
+            continue
+        for r, v in enumerate(vals, start=1):
+            if ws.cell(row=r, column=col).value != v:
+                diffs.append(f"col{col}r{r}: {v!r} 被改动")
+    return {
+        "ok": not diffs,
+        "formula_count": actual["formula_count"],
+        "merged_ranges": actual["merged_ranges"],
+        "freeze_panes": actual["freeze_panes"],
+        "diffs": diffs[:5],
+    }
+
+
+def _safe_save(workbook, source_path: str) -> str:
+    """W5：文件被占用 → 回退 <原目录>/_takeoff/<文件名>，返回实际保存路径"""
+    import os
+
+    try:
+        workbook.save(source_path)
+        return source_path
+    except PermissionError:
+        alt_dir = os.path.join(os.path.dirname(os.path.abspath(source_path)), "_takeoff")
+        os.makedirs(alt_dir, exist_ok=True)
+        alt_path = os.path.join(alt_dir, os.path.basename(source_path))
+        workbook.save(alt_path)
+        return alt_path
+
+
+def writeback_to_excel(
+    source_file_path: str,
+    project_id: int,
+    project_scale: float = 1.0,
+) -> dict:
+    """W1-W6 Excel 保真回写（v2.0 §6.4）：打开原 Excel → 新增列 → 校验 → 保存
+
+    W1: openpyxl.load_workbook(data_only=False) —— 保公式（不落缓存值）
+    W2: 只写新增列（max_col+1，或已存在的 measured_qty 列），不碰原表已有列
+    W3: 新增表头不克隆 StyleProxy，直接 new Font/Fill/Alignment 样式对象
+    W4: _verify_integrity 保存前校验公式数/合并格/冻结窗格 + 原列 diff=0
+    W5: _safe_save 文件被占用 → 回退 <原目录>/_takeoff/ 并告知
+    W6: writeback_audit 记录 file_sha256 + written 行数
+
+    行匹配顺序：row_index（解析时 Excel 行号）→ item_key（r123/M-r5）→ code 精确
+    """
+    import os
+
+    import openpyxl
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    from .boq_parser import HEADER_PROBE_ROWS, _detect_headers, _extract_item_key
+    from .boq_parser import _row_looks_like_header
+
+    if not os.path.exists(source_file_path):
+        raise FileNotFoundError(f"BOQ Excel 不存在: {source_file_path}")
+
+    # W1: 保公式加载
+    wb = openpyxl.load_workbook(source_file_path, data_only=False)
+    ws = wb.active
+
+    # 表头探测（与 boq_parser B1 同款：前 16 行找 Item+Description）
+    header_idx, mapping = 0, {"code": 0, "description": 1, "unit": 2}
+    for i, row in enumerate(ws.iter_rows(max_row=HEADER_PROBE_ROWS, values_only=True)):
+        m = _detect_headers(row)
+        if len(m) >= 2 and _row_looks_like_header(row):
+            header_idx, mapping = i, m
+            break
+    code_col = mapping.get("code", 0) + 1  # 1-based
+
+    # W2: 已有 measured_qty 列 → 复用（幂等）；否则 max_col+1 新增
+    measured_col = None
+    for c in range(1, ws.max_column + 1):
+        v = ws.cell(row=header_idx + 1, column=c).value
+        if v is not None and MEASURED_COL_TEXT in str(v).strip().lower().replace(" ", ""):
+            measured_col = c
+            break
+    target_col = measured_col or (ws.max_column + 1)
+
+    # 写前快照（W4 校验基准）
+    snapshot_cells = {
+        c: [ws.cell(row=r, column=c).value for r in range(1, ws.max_row + 1)]
+        for c in range(1, ws.max_column + 1)
+    }
+    snapshot_meta = {
+        "formula_count": _count_formulas(ws),
+        "merged_ranges": len(ws.merged_cells.ranges),
+        "freeze_panes": ws.freeze_panes,
+    }
+
+    items = db.get_boq_items(project_id)
+    by_row = {it.row_index: it for it in items if it.row_index}
+    by_key = {it.item_key: it for it in items if it.item_key}
+    by_code = {it.code: it for it in items if it.code}
+
+    # W3: 新表头（不克隆 StyleProxy，新样式对象）
+    header_cell = ws.cell(row=header_idx + 1, column=target_col)
+    if not measured_col:
+        header_cell.value = MEASURED_COL_TEXT
+        header_cell.font = Font(bold=True)
+        header_cell.fill = PatternFill("solid", fgColor="D9E2F3")
+        header_cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    # 逐行匹配 + 写入 measured_qty
+    file_sha256 = compute_file_sha256(source_file_path)  # W6
+    written = 0
+    for r in range(header_idx + 2, ws.max_row + 1):
+        code_val = ws.cell(row=r, column=code_col).value
+        item = by_row.get(r)
+        if item is None and code_val is not None:
+            text = str(code_val)
+            item = by_key.get(_extract_item_key(text)) or by_code.get(text.strip())
+        if item is None:
+            continue
+        ws.cell(row=r, column=target_col, value=round(float(item.measured_qty or 0.0), 4))
+        # W6: 逐行审计（含源文件 SHA-256）
+        _log_writeback_audit(
+            project_id, item.id, item.original_qty or 0.0, item.measured_qty or 0.0, "MEASURABLE", file_sha256
+        )
+        written += 1
+
+    integrity = _verify_integrity(ws, snapshot_meta, snapshot_cells, target_col)
+    output_path = _safe_save(wb, source_file_path)  # W5
+    return {
+        "project_id": project_id,
+        "source_file_path": source_file_path,
+        "output_path": output_path,
+        "written": written,
+        "failed": 0,
+        "total_items": len(items),
+        "verified": integrity["ok"],
+        "target_col": target_col,
+        "file_sha256": file_sha256,
+        "integrity": integrity,
+    }

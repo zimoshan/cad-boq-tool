@@ -44,6 +44,29 @@ class ExportBoqResponse(BaseModel):
     by_takability: dict = Field(default_factory=dict)
 
 
+class WritebackToExcelRequest(BaseModel):
+    """P4 v1.0 §6.4：Excel 保真回写请求（打开原 Excel，新增列写 measured_qty）"""
+
+    project_id: int
+    source_file_path: str = Field(..., description="BOQ 源 Excel 绝对路径（xlsx/xls）")
+    project_scale: float = 1.0
+
+
+class WritebackToExcelResponse(BaseModel):
+    """P4 v1.0 §6.4：Excel 保真回写响应"""
+
+    project_id: int
+    source_file_path: str
+    output_path: str  # 实际保存路径（文件锁定时回退 _takeoff/）
+    written: int
+    failed: int = 0
+    total_items: int = 0
+    verified: bool = False  # W4 完整性校验通过
+    target_col: int = 0  # 新增列号（1-based）
+    file_sha256: str = ""  # W6 源文件 SHA-256
+    integrity: dict = Field(default_factory=dict)  # W4 校验详情
+
+
 class BoqItemRead(BaseModel):
     """B2 扩展后 BoqItem"""
 

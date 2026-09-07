@@ -160,6 +160,39 @@ def test_boq_writeback(mock_wb, client):
     assert r.json()["written"] == 100
 
 
+@patch("webapi.routers.boq.boq_service.writeback_to_original_excel", new_callable=AsyncMock)
+def test_boq_writeback_to_excel(mock_wb, client):
+    """P4 v1.0 §6.4：W1-W6 Excel 保真回写端点"""
+    mock_wb.return_value = {
+        "project_id": 1,
+        "source_file_path": "D:/BOQ.xlsx",
+        "output_path": "D:/BOQ.xlsx",
+        "written": 50,
+        "failed": 0,
+        "total_items": 60,
+        "verified": True,
+        "target_col": 13,
+        "file_sha256": "ab" * 32,
+        "integrity": {"ok": True},
+    }
+    r = client.post(
+        "/api/boq/writeback-to-excel",
+        json={"project_id": 1, "source_file_path": "D:/BOQ.xlsx", "project_scale": 1.0},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["written"] == 50
+    assert body["verified"] is True
+    assert body["target_col"] == 13
+    assert len(body["file_sha256"]) == 64
+
+
+def test_boq_writeback_to_excel_missing_path(client):
+    """source_file_path 必填 → 422"""
+    r = client.post("/api/boq/writeback-to-excel", json={"project_id": 1})
+    assert r.status_code == 422
+
+
 @patch("webapi.routers.boq.boq_service.export_boq_to_excel", new_callable=AsyncMock)
 def test_boq_export(mock_export, client):
     """v1.0 §15 工程量回写：导出实测值到 Excel"""

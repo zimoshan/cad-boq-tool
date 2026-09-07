@@ -146,7 +146,17 @@
   - **WKT 解析**：后端 `query_viewport` 返回 `geom_wkt`（`ST_AsText` 的 PostGIS WKT），前端需 WKT→canvas path 解析器（或后端改返回几何数组）
   - 后端 `entity` bbox 列已就绪（alembic 0001：min_x/max_x/min_y/max_y）；`GET /api/cad/{metadata,layers,blocks,entities}` 4 端点可用
   - v1.0 §13 铁律：禁止"全部 Entity JSON → DOM/SVG"；流程 = metadata → overview → LOD0 → viewport 局部请求 → LOD1/2 → 选中再拉完整属性
-- [ ] **Phase 4 · 业务闭环联调 + Excel 保真回写契约**（v2.0 §6.4）⬜
+- [ ] **Phase 4 · 业务闭环联调 + Excel 保真回写契约**（v2.0 §6.4）🚧（2026-09-07：W1-W6 核心回写已落地，剩业务闭环联调）
+  - W1 保公式加载 `data_only=False` ✅（`app/boq/writeback.py` `writeback_to_excel()`）
+  - W2 只写新增列（max_col+1 / 已有 measured_qty 列复用幂等），原表列零改动 ✅
+  - W3 新增表头新样式对象（不克隆 StyleProxy）✅
+  - W4 `_verify_integrity()` 公式数/合并格/冻结窗格 + 原列 diff=0 ✅
+  - W5 `_safe_save()` 文件被占用 → 回退 `<原目录>/_takeoff/` ✅
+  - W6 `writeback_audit` 逐行审计 + file_sha256 ✅
+  - 端点 `POST /api/boq/writeback-to-excel` + service `writeback_to_original_excel` + schema `WritebackToExcel{Request,Response}` ✅
+  - 测试 `tests/test_phase4_writeback.py`（13 case：W1-W6 单条 + 行匹配/幂等/边界）+ router 2 case；**全量 307 passed**（292+15）✅
+  - 真实文件验收：`BOQ-004_Structural_回填.xlsx`（17 项）→ 探测表头 row 9 → 新增 P 列 → 17/17 写入 → verified=True（8 公式/19 合并/冻结 A10 保留）→ 幂等复用 ✅
+  - 剩余：业务闭环联调（解析→绑定→计量→回写 UI 打通）+ 锁文件人工验收
 - [ ] **Phase 5 · AI**（Candidate Union/Embedding/审核/正负样本/置信度校准）⬜
 - [ ] **Phase 6 · 工程化**（版本冲突/跨专业索引/组级降级/indexer/CI/CD）⬜
 

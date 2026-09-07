@@ -14,6 +14,8 @@ from webapi.schemas.boq import (
     ParseBoqResponse,
     WritebackRequest,
     WritebackResponse,
+    WritebackToExcelRequest,
+    WritebackToExcelResponse,
 )
 from webapi.services import boq as boq_service
 
@@ -34,6 +36,18 @@ async def writeback(req: WritebackRequest, db: AsyncSession = Depends(get_db)) -
     """回写 measured_qty（B5 S7 Excel 保真回写，P0-15 落实）"""
     result = await boq_service.writeback_quantities(db, req.project_id, req.project_scale)
     return WritebackResponse(**result)
+
+
+@router.post("/writeback-to-excel", response_model=WritebackToExcelResponse)
+@requires("boq:writeback")
+async def writeback_to_excel(req: WritebackToExcelRequest) -> WritebackToExcelResponse:
+    """P4 v1.0 §6.4 W1-W6 Excel 保真回写：
+    W1 保公式加载 → W2 只写新增列 → W3 新表头样式 → W4 完整性校验 → W5 锁文件回退 → W6 审计
+    """
+    result = await boq_service.writeback_to_original_excel(
+        None, req.project_id, req.source_file_path, req.project_scale
+    )
+    return WritebackToExcelResponse(**result)
 
 
 # P4 v1.0 §6.4 完整 Excel 保真回写契约
