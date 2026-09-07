@@ -74,25 +74,27 @@ async def query_viewport(
     sheet_id: int,
     bbox: tuple[float, float, float, float],  # (min_x, min_y, max_x, max_y)
     limit: int = 10000,
+    include_geom: bool = True,  # P3-4: LOD0 概览不回 geom（payload 减半）
 ) -> list[dict[str, Any]]:
-    """B4 空间查询：返回 bbox 内的 entity
+    """B4 范围查询：返回 bbox 内的 entity
 
     双引擎：
     - PostGIS（PG 生产）：geometry && ST_MakeEnvelope（GIST 索引）
-    - SQLite（本地库）：bbox JSON 列 '[min_x,min_y,max_x,max_y]' 相交查询
+    - SQLite（本地库）：bbox 列 '[min_x,min_y,max_x,max_y]' 相交查询
 
-    返回 snapshot 行（SQLite 含 geom/bbox；PG 含 geom_wkt）。
+    include_geom=False（LOD0 概览）：省略 geom_json/geom_wkt，只回
+    id/handle/dxf_type/layer/block_name/bbox/length/area → 大图 payload 减半。
     """
     import json
 
     min_x, min_y, max_x, max_y = bbox
-
     postgres = _dialect_is_pg(db)
 
     if postgres:
-        sql = text("""
+        geom_col = "ST_AsText(geometry) AS geom_wkt" if include_geom else "NULL AS geom_wkt"
+        sql = text(f"""
             SELECT id, handle, dxf_type, layer, block_name,
-                   ST_AsText(geometry) AS geom_wkt,
+                   {geom_col},
                    length, area
             FROM entity
             WHERE sheet_id = :sheet_id
@@ -106,9 +108,12 @@ async def query_viewport(
         return [dict(r._mapping) for r in result]
 
     # SQLite 分支：bbox JSON 列范围相交
+    if include_geom:
+        cols = "id, handle, dxf_type, layer, block_name, bbox, geom_json, length, color"
+    else:
+        cols = "id, handle, dxf_type, layer, block_name, bbox, length, color"
     sql = text(f"""
-        SELECT id, handle, dxf_type, layer, block_name,
-               bbox, geom_json, length, area
+        SELECT {cols}
         FROM entity
         WHERE sheet_id = :sheet_id
           AND {_bbox_overlaps_cond(min_x, min_y, max_x, max_y)}
@@ -121,9 +126,12 @@ async def query_viewport(
     rows = []
     for row in result:
         r = dict(row._mapping)
-        try:
-            r["geom"] = json.loads(r.pop("geom_json") or "{}")
-        except (ValueError, TypeError):
+        if include_geom:
+            try:
+                r["geom"] = json.loads(r.pop("geom_json") or "{}")
+            except (ValueError, TypeError):
+                r["geom"] = {}
+        else:
             r["geom"] = {}
         try:
             r["bbox"] = json.loads(r.get("bbox") or "[0,0,0,0]")

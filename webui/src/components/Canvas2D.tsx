@@ -21,11 +21,13 @@ interface EntityData {
 }
 
 // LOD 阈值：缩放级别（像素/单位）决定绘制细节
-// scale < LOD0_SCALE  → 只画 bbox 矩形（概览）
+// scale < LOD0_SCALE  → 只画 bbox 矩形（概览）+ 后端不传 geom（payload 减半）
 // scale >= LOD0_SCALE → 完整几何（细节）
 const LOD0_SCALE = 0.02;
 const VIEWPORT_DEBOUNCE_MS = 250;
 const MAX_VIEWPORT_ENTITIES = 5000;
+// P3-4：LOD0 概览只画 bbox 矩形，2000 行已足够覆盖画面（5000 行过密且拖慢传输）
+const LOD0_MAX_ENTITIES = 2000;
 
 // ---- 视口状态 ----
 interface Viewport {
@@ -62,7 +64,9 @@ export function Canvas2D({ sheetId = 73, projectId = 25 }: { sheetId?: number; p
   const [mode, setMode] = useState<"api" | "static">("api");
   const [sheets, setSheets] = useState<{ id: number; filename: string; entity_count: number }[]>([]);
   const [activeSheet, setActiveSheet] = useState(sheetId);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
   const dragRef = useRef<{ x: number; y: number } | null>(null);
+  const dragStartRef = useRef<{ x: number; y: number } | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const entitiesRef = useRef<Entity[]>([]);
   entitiesRef.current = entities;
@@ -97,8 +101,8 @@ export function Canvas2D({ sheetId = 73, projectId = 25 }: { sheetId?: number; p
     // API 模式：metadata → 全图 viewport
     const loadApi = async () => {
       try {
-        // 先请求全图 bbox（超大范围拉全图；随后用户缩放触发局部请求）
-        const bbox = { sheet_id: sheetId, min_x: -1e9, min_y: -1e9, max_x: 1e9, max_y: 1e9, limit: MAX_VIEWPORT_ENTITIES };
+        // 先请求全图 bbox（超大范围拉全图；LOD0 概览不需 geom，payload 减半 + 行数受限）
+        const bbox = { sheet_id: sheetId, min_x: -1e9, min_y: -1e9, max_x: 1e9, max_y: 1e9, limit: LOD0_MAX_ENTITIES, include_geom: false };
         const res = await api.cad.viewport(bbox as any);
         if (cancelled) return;
         const items: Entity[] = (res as any).items || [];
@@ -169,9 +173,10 @@ export function Canvas2D({ sheetId = 73, projectId = 25 }: { sheetId?: number; p
       const color = e.color?.length === 3
         ? `rgb(${e.color[0]},${e.color[1]},${e.color[2]})`
         : DXF_COLORS[e.dxf_type] || "#556677";
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 1;
-      ctx.globalAlpha = 0.8;
+      const isSel = selectedId !== null && e.id === selectedId;
+      ctx.strokeStyle = isSel ? "#ffcc00" : color;  // P3-5 选中高亮：金色
+      ctx.lineWidth = isSel ? 2.5 : 1;
+      ctx.globalAlpha = isSel ? 1 : 0.8;
 
       const [minX, minY, maxX, maxY] = e.bbox;
       const sx = toScreenX(minX);
@@ -274,7 +279,7 @@ export function Canvas2D({ sheetId = 73, projectId = 25 }: { sheetId?: number; p
       }
     }
     ctx.globalAlpha = 1;
-  }, [entities, visibleLayers, viewport]);
+  }, [entities, visibleLayers, viewport, selectedId]);
 
   // ---- 视口适配（首次加载时自动缩放到 canvas 尺寸）----
   useEffect(() => {
@@ -318,9 +323,13 @@ export function Canvas2D({ sheetId = 73, projectId = 25 }: { sheetId?: number; p
       const worldMaxX = viewport.ox + W / viewport.scale;
       const worldMaxY = viewport.oy + H / viewport.scale;
       try {
+        // P3-4: LOD0（概览缩放）不传 geom + 降低 limit（2000 行足矣）；
+        // 放大到细节级才带完整几何
+        const lod0 = viewport.scale < LOD0_SCALE;
         const res = await api.cad.viewport({
           sheet_id: sheetId, min_x: worldMinX, min_y: worldMinY,
-          max_x: worldMaxX, max_y: worldMaxY, limit: MAX_VIEWPORT_ENTITIES,
+          max_x: worldMaxX, max_y: worldMaxY, limit: lod0 ? LOD0_MAX_ENTITIES : MAX_VIEWPORT_ENTITIES,
+          include_geom: !lod0,
         });
         const items: Entity[] = (res as any).items || [];
         setEntities(items);
@@ -338,8 +347,11 @@ export function Canvas2D({ sheetId = 73, projectId = 25 }: { sheetId?: number; p
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [viewport, sheetId, mode]);
 
-  // ---- 鼠标交互（拖拽平移 + 滚轮缩放）----
-  const handleMouseDown = (e: React.MouseEvent) => { dragRef.current = { x: e.clientX, y: e.clientY }; };
+  // ---- 鼠标交互（拖拽平移 + 滚轮缩放 + 点击选中）----
+  const handleMouseDown = (e: React.MouseEvent) => {
+    dragRef.current = { x: e.clientX, y: e.clientY };
+    dragStartRef.current = { x: e.clientX, y: e.clientY };
+  };
   const handleMouseMove = (e: React.MouseEvent) => {
     if (!dragRef.current) return;
     const dx = e.clientX - dragRef.current.x;
@@ -347,7 +359,37 @@ export function Canvas2D({ sheetId = 73, projectId = 25 }: { sheetId?: number; p
     dragRef.current = { x: e.clientX, y: e.clientY };
     setViewport((v) => ({ ...v, ox: v.ox - dx / v.scale, oy: v.oy + dy / v.scale }));
   };
-  const handleMouseUp = () => { dragRef.current = null; };
+  const handleMouseUp = (e: React.MouseEvent) => {
+    const dx = e.clientX - (dragStartRef.current?.x ?? e.clientX);
+    const dy = e.clientY - (dragStartRef.current?.y ?? e.clientY);
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    // 拖拽距离 < 5px 视为点击 → 选中最近实体
+    if (dist < 5) {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const { ox, oy, scale } = viewport;
+      const cadX = ox + mx / scale;
+      const cadY = oy + (canvas.height - my) / scale;
+      // 找最近实体（LOD0 模式用 bbox 中心，放大模式用 bbox 边界距离）
+      let best: Entity | null = null;
+      let bestDist = Infinity;
+      const vis = entitiesRef.current.filter((e) => visibleLayers.has(e.layer));
+      for (const ent of vis) {
+        if (!ent.bbox || ent.bbox.length < 4) continue;
+        const [bx0, by0, bx1, by1] = ent.bbox;
+        const cx2 = (bx0 + bx1) / 2;
+        const cy2 = (by0 + by1) / 2;
+        const d = Math.hypot(cadX - cx2, cadY - cy2);
+        if (d < bestDist) { bestDist = d; best = ent; }
+      }
+      setSelectedId(best && bestDist < 5000 / scale ? best.id ?? null : null);
+    }
+    dragRef.current = null;
+    dragStartRef.current = null;
+  };
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
     const factor = e.deltaY < 0 ? 1.15 : 0.87;
@@ -438,6 +480,12 @@ export function Canvas2D({ sheetId = 73, projectId = 25 }: { sheetId?: number; p
         />
         <div style={{ position: "absolute", bottom: 8, left: 8, fontSize: 10, color: "var(--text-muted)", background: "rgba(0,0,0,0.5)", padding: "2px 6px", borderRadius: 3 }}>
           {info} | scale={viewport.scale.toFixed(4)}
+          {selectedId !== null && (() => {
+            const ent = entities.find((e) => e.id === selectedId);
+            return ent
+              ? <> | <span style={{ color: "#ffcc00" }}>#{ent.id} {ent.dxf_type} [{ent.layer}] bbox={JSON.stringify(ent.bbox.map((v: number) => Math.round(v)))}</span></>
+              : null;
+          })()}
         </div>
         </div>{/* canvas 容器 end */}
       </div>{/* canvas 主体 column end */}

@@ -38,3 +38,7 @@ class ViewportQuery(BaseModel):
     max_x: float
     max_y: float
     limit: int = Field(default=10000, le=50000)
+    include_geom: bool = Field(
+        default=True,
+        description="LOD0 概览时为 false：不回 geom_json/geom_wkt，只回 bbox 元数据（大图 payload 减半）",
+    )
