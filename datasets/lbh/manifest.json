@@ -4,7 +4,18 @@
   "schema_version": "cad-1.0",
   "parser_version": "v2",
   "source_revision": "R4",
-  "generated_at": "2026-09-07T11:29:50.046191",
-  "note": "P0-30 占位结构（v1.0 §7-§11）。真实 DWG/DXF/BOQ 由用户从 D:\\ifc_2026-08-24_0536 手动整理后填入 files[]。",
-  "files": []
+  "generated_at": "2026-09-07T12:45:00",
+  "note": "Phase 3 最小验证：sheet 73（12,000 entities）。完整 LBH 电气 38 + 机械 7 + 建筑 35 DWG 待逐步入库。",
+  "files": [
+    {
+      "drawing_id": "LBH-E-073",
+      "filename": "01-LBH lighting system ground floor outdoor.dwg",
+      "discipline": "Electrical",
+      "drawing_type": "plan",
+      "entity_count": 12000,
+      "sheet_id": 73,
+      "json_path": "parsed/json/v2/LBH-E-073/",
+      "parquet_path": ""
+    }
+  ]
 }
