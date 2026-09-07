@@ -77,7 +77,9 @@ class JobManager:
         logger.info(f"Job submitted: {job.id} {name}")
         return job
 
-    async def submit_by_name(self, name: str, func_name: str, payload: dict | None = None, created_by: str = "sysadmin") -> Job:
+    async def submit_by_name(
+        self, name: str, func_name: str, payload: dict | None = None, created_by: str = "sysadmin"
+    ) -> Job:
         """按注册表名提交真实业务任务（Phase 2：/api/jobs/submit 接线）
 
         func_name 必须是 webapi.jobs.tasks.TASKS 中登记的键，

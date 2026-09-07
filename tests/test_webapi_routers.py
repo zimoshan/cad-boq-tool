@@ -493,6 +493,45 @@ def test_cad_standard_404(client):
     assert r.status_code == 404
 
 
+# ---------- Phase 6 闸门端点（版本冲突 / 重复计价） ----------
+
+@patch("webapi.routers.binding.binding_service.get_version_conflicts", new_callable=AsyncMock)
+def test_binding_version_conflicts(mock_vc, client):
+    mock_vc.return_value = {
+        "has_revision_info": True,
+        "total_sheets": 2,
+        "versioned_groups": 1,
+        "multi_sheet_groups": 1,
+        "stale_sheets": [],
+        "stale_mappings": [{"mapping_id": 1, "boq_item_id": 5}],
+        "version_breakdown": [],
+    }
+    r = client.get("/api/binding/version-conflicts?project_id=7")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["versioned_groups"] == 1
+    assert body["stale_mappings"][0]["boq_item_id"] == 5
+
+
+@patch("webapi.routers.binding.binding_service.get_duplicate_pricing", new_callable=AsyncMock)
+def test_binding_duplicate_pricing(mock_dp, client):
+    mock_dp.return_value = {
+        "total": 1,
+        "items": [
+            {
+                "anchor": "block:fan01",
+                "kind": "block",
+                "needs_review": True,
+                "boq_items": [{"boq_item_id": 10, "code": "A-1"}, {"boq_item_id": 11, "code": "A-2"}],
+            }
+        ],
+    }
+    r = client.get("/api/binding/duplicate-pricing?project_id=7")
+    assert r.status_code == 200
+    assert r.json()["total"] == 1
+    assert r.json()["items"][0]["anchor"] == "block:fan01"
+
+
 # ---------- RBAC 装饰器端到端（简化版：仅校验不抛 403） ----------
 
 def test_no_login_decorator_does_not_403(client, monkeypatch):

@@ -28,9 +28,7 @@ async def viewport(query: ViewportQuery, db: AsyncSession = Depends(get_db)) -> 
     include_geom=false（前端 LOD0 概览）：只回 bbox 元数据，payload 减半。
     """
     bbox = (query.min_x, query.min_y, query.max_x, query.max_y)
-    rows = await cad_service.query_viewport(
-        db, query.sheet_id, bbox, query.limit, query.include_geom
-    )
+    rows = await cad_service.query_viewport(db, query.sheet_id, bbox, query.limit, query.include_geom)
     return {"items": rows, "total": len(rows)}
 
 

@@ -278,8 +278,7 @@ def writeback_to_excel(
     import openpyxl
     from openpyxl.styles import Alignment, Font, PatternFill
 
-    from .boq_parser import HEADER_PROBE_ROWS, _detect_headers, _extract_item_key
-    from .boq_parser import _row_looks_like_header
+    from .boq_parser import HEADER_PROBE_ROWS, _detect_headers, _extract_item_key, _row_looks_like_header
 
     if not os.path.exists(source_file_path):
         raise FileNotFoundError(f"BOQ Excel 不存在: {source_file_path}")
@@ -308,8 +307,7 @@ def writeback_to_excel(
 
     # 写前快照（W4 校验基准）
     snapshot_cells = {
-        c: [ws.cell(row=r, column=c).value for r in range(1, ws.max_row + 1)]
-        for c in range(1, ws.max_column + 1)
+        c: [ws.cell(row=r, column=c).value for r in range(1, ws.max_row + 1)] for c in range(1, ws.max_column + 1)
     }
     snapshot_meta = {
         "formula_count": _count_formulas(ws),

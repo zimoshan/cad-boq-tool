@@ -95,7 +95,9 @@ async def writeback_to_original_excel(
     except FileNotFoundError:
         raise NotFoundError("BOQ excel file", source_file_path) from None
     except PermissionError:
-        raise ServiceError(f"BOQ excel 被占用且回退 _takeoff/ 失败: {source_file_path}", code="boq_writeback_excel_locked") from None
+        raise ServiceError(
+            f"BOQ excel 被占用且回退 _takeoff/ 失败: {source_file_path}", code="boq_writeback_excel_locked"
+        ) from None
     except Exception as e:
         raise ServiceError(f"Excel writeback failed: {e}", code="boq_writeback_excel_error") from e
 

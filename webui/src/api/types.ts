@@ -73,6 +73,8 @@ export interface paths {
         /**
          * Viewport
          * @description B4 空间查询：bbox 范围内 entity 列表
+         *
+         *     include_geom=false（前端 LOD0 概览）：只回 bbox 元数据，payload 减半。
          */
         post: operations["viewport_api_cad_viewport_post"];
         delete?: never;
@@ -255,6 +257,86 @@ export interface paths {
          * @description 拒绝候选
          */
         post: operations["reject_api_binding_reject_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/binding/negative-samples": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Negative Samples
+         * @description v1.0 §17 查询负样本（拒绝的绑定记录）
+         */
+        get: operations["negative_samples_api_binding_negative_samples_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/binding/evaluation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Evaluation
+         * @description v1.0 §20 评测报告：按方法分层 precision/recall
+         */
+        get: operations["evaluation_api_binding_evaluation_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/binding/version-conflicts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Version Conflicts
+         * @description P6-1 版本冲突检测：同图名多 revision → stale 图纸 + 其上 mapping
+         */
+        get: operations["version_conflicts_api_binding_version_conflicts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/binding/duplicate-pricing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Duplicate Pricing
+         * @description P6-2 重复计价检测：同 block/layer 锚点命中 ≥2 个 BOQ 明细
+         */
+        get: operations["duplicate_pricing_api_binding_duplicate_pricing_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1371,6 +1453,12 @@ export interface components {
              * @default 10000
              */
             limit: number;
+            /**
+             * Include Geom
+             * @description LOD0 概览时为 false：不回 geom_json/geom_wkt，只回 bbox 元数据（大图 payload 减半）
+             * @default true
+             */
+            include_geom: boolean;
         };
         /**
          * WritebackAuditedRequest
@@ -1879,6 +1967,132 @@ export interface operations {
                 "application/json": components["schemas"]["RejectBindingRequest"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    negative_samples_api_binding_negative_samples_get: {
+        parameters: {
+            query: {
+                project_id: number;
+                method?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    evaluation_api_binding_evaluation_get: {
+        parameters: {
+            query: {
+                project_id: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    version_conflicts_api_binding_version_conflicts_get: {
+        parameters: {
+            query: {
+                project_id: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    duplicate_pricing_api_binding_duplicate_pricing_get: {
+        parameters: {
+            query: {
+                project_id: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

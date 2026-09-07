@@ -36,9 +36,7 @@ async def task_boq_parse(job: Job, progress_cb) -> dict[str, Any]:
     payload = job.payload or {}
     _report(progress_cb, "boq_parse", 0, 2, "解析 BOQ Excel...")
     async with async_session_factory() as db:
-        result = await boq_service.parse_boq_excel(
-            db, payload.get("project_id", 0), payload.get("file_path", "")
-        )
+        result = await boq_service.parse_boq_excel(db, payload.get("project_id", 0), payload.get("file_path", ""))
     count = result.get("item_count", 0)
     _report(progress_cb, "boq_parse", 2, 2, f"完成：{count} 项")
     return result
@@ -49,9 +47,7 @@ async def task_cad_parse(job: Job, progress_cb) -> dict[str, Any]:
     payload = job.payload or {}
     _report(progress_cb, "cad_parse", 0, 2, "解析 CAD...")
     async with async_session_factory() as db:
-        result = await cad_service.parse_cad_file(
-            db, payload.get("project_id", 0), payload.get("file_path", "")
-        )
+        result = await cad_service.parse_cad_file(db, payload.get("project_id", 0), payload.get("file_path", ""))
     entity_count = result.get("entity_count", 0)
     _report(progress_cb, "cad_parse", 2, 2, f"完成：{entity_count} 实体")
     return result

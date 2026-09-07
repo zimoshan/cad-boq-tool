@@ -50,6 +50,7 @@ class BindingCandidateRead(BaseModel):
 
 class NegativeSampleRead(BaseModel):
     """v1.0 §17 负样本记录"""
+
     id: int
     project_id: int
     engineering_object_id: int
@@ -63,6 +64,7 @@ class NegativeSampleRead(BaseModel):
 
 class EvaluationReport(BaseModel):
     """v1.0 §20 评测报告：按方法分层 precision/recall"""
+
     project_id: int
     total_candidates: int
     total_confirmed: int

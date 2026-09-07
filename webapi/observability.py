@@ -53,6 +53,7 @@ def setup_logging(level: str = "INFO", json_output: bool = False, log_file: str 
     if log_file:
         try:
             import os
+
             os.makedirs(os.path.dirname(log_file) or ".", exist_ok=True)
             handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
         except (OSError, PermissionError):

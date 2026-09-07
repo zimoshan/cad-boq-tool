@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.binding.matcher import generate_candidates
 from app.binding.reviewer import confirm_binding as _confirm_binding
 from app.binding.reviewer import reject_binding as _reject_binding
+from app.binding.version_gate import build_version_report
 from webapi.services.base import NotFoundError, ServiceError
 
 
@@ -179,6 +180,87 @@ async def reject_binding(
         return result
     except Exception as e:
         raise ServiceError(f"Reject binding failed: {e}", code="binding_reject_error") from e
+
+
+# ===== Phase 6: 版本冲突 + 重复计价闸门 =====
+
+
+async def get_version_conflicts(db: AsyncSession, project_id: int) -> dict[str, Any]:
+    """P6-1 版本冲突检测（双引擎）：
+    - PG/有 revision 列的库：async 查 sheet → 纯逻辑 build_version_report
+      → 进一步查 stale 图纸上的 mapping（stale_mappings）
+    - SQLite（无 revision 列）：降级空报告（has_revision_info=False）
+    """
+    try:
+        result = await db.execute(
+            text("SELECT id, filename, revision FROM sheet WHERE project_id = :pid ORDER BY id"),
+            {"pid": project_id},
+        )
+        rows = [dict(r._mapping) for r in result]
+    except Exception:
+        return {
+            "has_revision_info": False,
+            "total_sheets": 0,
+            "versioned_groups": 0,
+            "multi_sheet_groups": 0,
+            "stale_sheets": [],
+            "stale_mappings": [],
+            "version_breakdown": [],
+        }
+
+    r = build_version_report(rows)
+    stale_sheets = r.pop("stale_sheets", [])
+
+    # stale 图纸上的 mapping（join sheet 取 filename/revision）
+    mappings: list[dict[str, Any]] = []
+    stale_ids = [sv.sheet_id for sv in stale_sheets]
+    if stale_ids:
+        rev_of = {sv.sheet_id: sv.latest_revision for sv in stale_sheets}
+        msql = """SELECT m.id AS mapping_id, m.boq_item_id, m.sheet_id, m.mode,
+                         m.block_name, m.layer_name, s.filename, s.revision
+                  FROM mapping m JOIN sheet s ON s.id = m.sheet_id
+                  WHERE s.project_id = :pid AND m.sheet_id = :sid"""
+        try:
+            for sid in stale_ids:
+                mres = await db.execute(text(msql), {"pid": project_id, "sid": sid})
+                for row in mres:
+                    mrow = dict(row._mapping)
+                    mrow["latest_revision"] = rev_of.get(mrow["sheet_id"], "")
+                    mappings.append(mrow)
+        except Exception:
+            mappings = []
+
+    r["stale_sheets"] = [vars(sv) for sv in stale_sheets]
+    r["stale_mappings"] = mappings
+    return r
+
+
+async def get_duplicate_pricing(db: AsyncSession, project_id: int) -> dict[str, Any]:
+    """P6-2 跨专业/跨清单重复计价检测"""
+    from app.binding.duplicate_pricing import build_duplicates
+
+    # mapping（join boq 限定本项目）
+    msql = """SELECT m.id, m.boq_item_id, m.sheet_id, m.mode, m.block_name, m.layer_name
+              FROM mapping m JOIN boq_item b ON b.id = m.boq_item_id
+              WHERE b.project_id = :pid ORDER BY m.id"""
+    try:
+        mres = await db.execute(text(msql), {"pid": project_id})
+        mappings = [dict(r._mapping) for r in mres]
+    except Exception:
+        return {"total": 0, "items": []}
+
+    # boq 索引（code/description）
+    try:
+        bres = await db.execute(
+            text("SELECT id, code, description FROM boq_item WHERE project_id = :pid"),
+            {"pid": project_id},
+        )
+        boq_index = {r["id"]: r for r in bres}
+    except Exception:
+        boq_index = {}
+
+    items = build_duplicates(mappings, boq_index)
+    return {"total": len(items), "items": items}
 
 
 # ===== Phase 5: Negative Sample Query + Evaluation =====

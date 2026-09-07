@@ -80,3 +80,26 @@ async def evaluation(
 ) -> dict:
     """v1.0 §20 评测报告：按方法分层 precision/recall"""
     return await binding_service.get_evaluation_report(db, project_id)
+
+
+# ===== Phase 6: 闸门（版本冲突 / 重复计价） =====
+
+
+@router.get("/version-conflicts")
+@requires("binding:read")
+async def version_conflicts(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """P6-1 版本冲突检测：同图名多 revision → stale 图纸 + 其上 mapping"""
+    return await binding_service.get_version_conflicts(db, project_id)
+
+
+@router.get("/duplicate-pricing")
+@requires("binding:read")
+async def duplicate_pricing(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """P6-2 重复计价检测：同 block/layer 锚点命中 ≥2 个 BOQ 明细"""
+    return await binding_service.get_duplicate_pricing(db, project_id)

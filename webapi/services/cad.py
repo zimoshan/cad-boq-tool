@@ -152,9 +152,7 @@ async def list_sheets(db: AsyncSession, project_id: int) -> list[dict[str, Any]]
     双 schema 兼容（同 get_sheet_metadata）。
     """
     postgres = _dialect_is_pg(db)
-    extra = (
-        ", units, drawing_type, level, zone, revision, design_stage" if postgres else ""
-    )
+    extra = ", units, drawing_type, level, zone, revision, design_stage" if postgres else ""
     result = await db.execute(
         text(f"""SELECT id, project_id, filename, status, scale, entity_count,
                        layer_count, blocks_json{extra}
@@ -172,11 +170,7 @@ async def get_sheet_metadata(db: AsyncSession, sheet_id: int) -> dict[str, Any] 
       - SQLite（本地开发库，桌面旧库）：基础列（无 v2.0 追加列）
     """
     postgres = _dialect_is_pg(db)
-    extra = (
-        """, units, drawing_type, level, zone, revision, design_stage"""
-        if postgres
-        else ""
-    )
+    extra = """, units, drawing_type, level, zone, revision, design_stage""" if postgres else ""
     result = await db.execute(
         text(f"""SELECT id, project_id, filename, src_path, dxf_path, status, scale,
                        entity_count, layer_count{extra}
