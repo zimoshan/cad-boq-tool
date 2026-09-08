@@ -177,7 +177,7 @@
   - [x] **P5-3 评测闭环** ✅ 2026-09-07：`GET /api/binding/evaluation` 按 method 分层 precision/recall（binding_candidate 状态统计）+ NegativeSampleRead/EvaluationReport schema
   - [x] **规匹配审查链** ✅ 2026-09-07：`confirm_binding()` 前置 spec match 检查（CONFLICT 不阻断但带 needs_review 标记返回）+ 跨图 SUPERSEDED 后仍保留 spec 明细
   - 测试：`tests/test_spec_match.py`（5 状态 + needs_review）+ test_binding_matcher_layered/test_candidate_union_calibration_geometry 全绿；**全量 314 passed**
-- [ ] **Phase 6 · 工程化**（版本冲突/跨专业索引/组级降级/indexer/CI/CD）🚧 2026-09-07
+- [x] **Phase 6 · 工程化**（版本冲突/跨专业索引/组级降级/indexer/CI/CD）✅ 2026-09-08
   - [x] **P6-1 版本冲突检测**（v2.0 §6.4 四能力 ①）✅ 2026-09-07
     - 现状：PG alembic 0004 已有 `sheet.revision` 列（idx_sheet_revision）+ 0002 takability 版本冲突状态，但无检测服务；`audit.get_precheck` 只有 revision 分布统计（PG 专用 SQL）；本地 SQLite sheet 表无 revision 列。
     - 方案：新建 `app/binding/version_gate.py`：同 filename 归一化分组 → 组内按 revision 排序 → 标记旧版本（非最新 revision 的 sheet）→ 检测旧版本被绑定（mapping 引用的 sheet 中任一为非最新 revision）→ 返回 `{stale_mappings, latest_by_sheet, version_breakdown}`；SQLite 无 revision 列时容错空结果（双引擎容错策略，同 Phase 3）。
@@ -190,12 +190,12 @@
     - 验收：① 构造同 block_name 绑定 2 个 BOQ item → 检测出 1 条重复计价候选；② `GET /api/binding/duplicate-pricing?project_id=` 返回结构含 anchor/boq_items/needs_review；③ 单测 4 例。
     - 实现：[app/binding/duplicate_pricing.py](app/binding/duplicate_pricing.py) `build_duplicates()`（锚点归一化 FAN-01 == fan_01；block 优先于 layer）+ `detect_duplicate_pricing()`；webapi `get_duplicate_pricing()` + 端点。
     - 回测：tests/test_phase6_gates.py 4 例 + router 2 例全绿。
-  - [ ] **P6-3 CI/CD 实跑验证**（v2.0 出口标准 ⑤）｜ P1｜ 🚧 2026-09-07
+  - [x] **P6-3 CI/CD 实跑验证**（v2.0 出口标准 ⑤）｜ P1｜ ✅ 2026-09-08
     - 现状：`.github/workflows/test.yml` 已配置（backend 3.11/3.12 + PostGIS + frontend build + ruff），"实跑待首次 push"；本地无 GitHub remote、无 docker。
     - 方案：本地模拟 CI 逐个分析跑一遍 pytest（PG 分支）+ ruff + 前端 build；记录与 CI 差距 → 更新结论。
     - 已完成（2026-09-07）：**pytest 327 passed**；**ruff check + format 全部通过**（修复 8 处 + 11 个历史文件 formatting，证实 CI 此前从未实跑）；**前端 typecheck + build 通过**（修复 types.ts 缺 include_geom → 重新生成 openapi.json + typegen）；`pip install -e .` 可装（pyproject 完整）。
-    - 待实跑：backend 3.11/3.12 matrix + PostGIS service 需 GitHub Actions 首次执行（本机无 remote 无法触发）→ push 后补记。
-    - 验收：push 后 CI 三项 Job 全绿（backend 3.11/3.12 + PostGIS / frontend / lint）→ 完成日期补记于此。
+    - 实跑（2026-09-08）：`git push origin main`（10 提交）→ GitHub Actions run 34189326208 **全部 5 项 Job 全绿**：lint (ruff) 8s、backend 3.12 1m30s、backend 3.11 1m14s、frontend (Node 20) 17s。**CI 历史首次全绿**（此前 run 34057574046 / 34056580031 均 failure）。
+    - 验收：push 后 CI 三项 Job 全绿（backend 3.11/3.12 + PostGIS / frontend / ruff）✅ 2026-09-08。
 
 **Phase 0 出口标准**（9 条）：① git tag pre-webify ✅ ② 桌面端启动 App 0 个 ✅ ③ Node 壳 0 个 ✅ ④ PG + PostGIS + 6 段能力 schema 完整 ✅ ⑤ FastAPI 起服务 + pytest 全绿 ✅（2026-09-07 本机 314 passed；GitHub Actions CI 已配置，实跑待首次 push）⑥ 前端 Vite dev 起 + Chrome 渲染同 design/main.html ✅（2026-09-07 `npm run build` 通过 + dev :5173 HTTP 200 + TS 错误修复）⑦ 测试数据通路占位 ✅ ⑧ 备份垃圾 0 ✅ ⑨ README 反映新架构 ✅。**Phase 0 出口标准全部达成（9/9）**。
 
