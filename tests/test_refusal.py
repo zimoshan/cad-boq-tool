@@ -222,3 +222,62 @@ class TestSpecConflictDowngrade:
         # reason 不含 [CONFLICT]
         reason = call_kwargs[1].get("reason", call_kwargs.kwargs.get("reason", ""))
         assert "[CONFLICT]" not in reason
+
+
+# ============================================================
+# P1-1: CIR 统一 Schema（QuantityRecord）
+# ============================================================
+
+
+class TestQuantityRecord:
+    """QuantityRecord 数据结构正确性"""
+
+    def test_to_dict(self):
+        from app.boq.quantity_record import QuantityRecord, ProvenanceStep
+
+        qr = QuantityRecord(
+            object_id=42,
+            value=3.14,
+            unit="m",
+            method="rule",
+            confidence=0.85,
+            provenance=[ProvenanceStep(step="规则命中", method="rule", confidence=0.9)],
+            source_sheet_id=7,
+            source_entity_ids=[101, 102],
+        )
+        d = qr.to_dict()
+        assert d["object_id"] == 42
+        assert d["value"] == 3.14
+        assert len(d["provenance"]) == 1
+        assert d["provenance"][0]["step"] == "规则命中"
+        assert d["source_sheet_id"] == 7
+
+    def test_from_binding_candidate(self):
+        from app.boq.quantity_record import QuantityRecord
+
+        candidate = {
+            "engineering_object_id": 10,
+            "confidence": 0.72,
+            "method": "llm",
+            "reason": "LLM 精排匹配",
+        }
+        qr = QuantityRecord.from_binding_candidate(candidate)
+        assert qr.object_id == 10
+        assert qr.confidence == 0.72
+        assert qr.method == "llm"
+        assert len(qr.provenance) == 1
+        assert qr.provenance[0].step == "LLM 精排"
+
+    def test_from_object(self):
+        from app.boq.quantity_record import QuantityRecord
+        from types import SimpleNamespace
+
+        candidate = SimpleNamespace(
+            engineering_object_id=5,
+            confidence=0.9,
+            method="rule",
+            reason="历史确认",
+        )
+        qr = QuantityRecord.from_binding_candidate(candidate)
+        assert qr.object_id == 5
+        assert qr.provenance[0].method == "rule"
