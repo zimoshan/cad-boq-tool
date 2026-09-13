@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Layout, RailKey } from "./components/Layout";
+import { OverviewPanel } from "./components/OverviewPanel";
 import { BindingWorkbench } from "./components/BindingWorkbench";
 import { BOQTable } from "./components/BOQTable";
 import { MeasurementPanel } from "./components/MeasurementPanel";
@@ -9,8 +10,9 @@ import { Canvas2D } from "./components/Canvas2D";
 import { theme } from "./theme";
 
 export default function App() {
-  const [activeRail, setActiveRail] = useState<RailKey>("binding");
+  const [activeRail, setActiveRail] = useState<RailKey>("overview");
   const PANELS: Record<RailKey, React.ReactNode> = {
+    overview: <OverviewPanel />,
     binding: <BindingWorkbench />,
     boq: <BOQTable />,
     measure: <MeasurementPanel />,
@@ -25,6 +27,7 @@ export default function App() {
       statusBar={
         <div>
           <div style={{ color: "var(--text-primary)", fontWeight: 600, marginBottom: 8, fontSize: 14 }}>
+            {activeRail === "overview" && "📊 跨专业总览"}
             {activeRail === "binding" && "🔗 绑定工作台"}
             {activeRail === "boq" && "📋 BOQ 清单"}
             {activeRail === "measure" && "📐 计量"}

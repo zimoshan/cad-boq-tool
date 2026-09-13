@@ -46,12 +46,29 @@ async def get_overview(
     sql_runs = text(
         "SELECT task_type, COUNT(*) AS n, AVG(duration_ms) AS avg_ms FROM llm_run WHERE project_id = :pid GROUP BY task_type"
     )
+    # P6-4：按专业核对率（eo 总数 + 已确认绑定数）。binding_candidate 表缺失时容错空列表
+    sql_by_discipline = text(
+        """SELECT COALESCE(NULLIF(eo.discipline, ''), 'UNKNOWN') AS discipline,
+                  COUNT(*) AS eo_total,
+                  COUNT(DISTINCT CASE WHEN bc.status = 'ACCEPTED' THEN eo.id END) AS confirmed
+           FROM engineering_object eo
+           LEFT JOIN binding_candidate bc ON bc.engineering_object_id = eo.id
+           WHERE eo.project_id = :pid
+           GROUP BY COALESCE(NULLIF(eo.discipline, ''), 'UNKNOWN')
+           ORDER BY eo_total DESC"""
+    )
 
     boq_count = (await db.execute(sql_boq, {"pid": project_id})).scalar() or 0
     mapping_count = (await db.execute(sql_mapping, {"pid": project_id})).scalar() or 0
     eo_by_type_discipline = [dict(r._mapping) for r in (await db.execute(sql_eo, {"pid": project_id}))]
     writeback_by_takability = [dict(r._mapping) for r in (await db.execute(sql_writeback, {"pid": project_id}))]
     runs_by_task = [dict(r._mapping) for r in (await db.execute(sql_runs, {"pid": project_id}))]
+    try:
+        by_disc_rows = [dict(r._mapping) for r in (await db.execute(sql_by_discipline, {"pid": project_id}))]
+        for row in by_disc_rows:
+            row["rate"] = round(row["confirmed"] / row["eo_total"], 3) if row["eo_total"] else 0.0
+    except Exception:
+        by_disc_rows = []  # binding_candidate 表缺失（fresh sqlite）
 
     return {
         "project_id": project_id,
@@ -60,6 +77,7 @@ async def get_overview(
         "eo_breakdown": eo_by_type_discipline,
         "writeback_by_takability": writeback_by_takability,
         "llm_runs_by_task": runs_by_task,
+        "by_discipline": by_disc_rows,
     }
 
 
@@ -72,7 +90,7 @@ async def get_precheck(
 
     1. drawing_type  2. takability  3. coverage  4. granularity  5. version  6. provisional
     """
-    # 1. drawing_type 分布（SQLite sheet 表无 drawing_type 列 → 容错空列表）
+    # 1. drawing_type 分布（SQLite 本地库 sheet 表无 drawing_type 列 → 容错空列表，同双引擎策略）
     sql_dt = text("""SELECT drawing_type, COUNT(*) AS n FROM sheet WHERE project_id = :pid GROUP BY drawing_type""")
     try:
         drawing_type_breakdown = [dict(r._mapping) for r in (await db.execute(sql_dt, {"pid": project_id}))]

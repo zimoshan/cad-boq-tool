@@ -526,6 +526,51 @@ class TestAuditService:
 
 
 # ============================================================
+# P6-4 跨专业总览：get_overview.by_discipline（dataviz 集成点①）
+# ============================================================
+
+
+class TestOverviewByDiscipline:
+    """by_discipline 聚合 + binding_candidate 表缺失容错"""
+
+    @pytest.mark.asyncio
+    async def test_by_discipline_rate(self):
+        from webapi.services.audit import get_overview
+
+        r1 = MagicMock()
+        r1._mapping = {"discipline": "ELV", "eo_total": 10, "confirmed": 4}
+        r2 = MagicMock()
+        r2._mapping = {"discipline": "MECH", "eo_total": 2, "confirmed": 0}
+        empty = MagicMock()
+        empty.scalar.return_value = 0
+        empty.__iter__ = lambda self: iter([])
+        db = MagicMock()
+        db.execute = AsyncMock(side_effect=[empty, empty, empty, empty, empty, [r1, r2]])
+        result = await get_overview(db=db, project_id=1)
+        assert result["by_discipline"][0]["discipline"] == "ELV"
+        assert result["by_discipline"][0]["rate"] == 0.4
+        assert result["by_discipline"][1]["rate"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_by_discipline_table_missing_tolerate(self):
+        """binding_candidate 表缺失 → by_discipline 空列表（双引擎容错）"""
+        from webapi.services.audit import get_overview
+
+        def side_effect(sql, args=None):
+            if "binding_candidate" in str(sql) and "discipline" in str(sql):
+                raise RuntimeError("no such table: binding_candidate")
+            ret = MagicMock()
+            ret.scalar.return_value = 0
+            ret.__iter__ = lambda self: iter([])
+            return ret
+
+        db = MagicMock()
+        db.execute = AsyncMock(side_effect=side_effect)
+        result = await get_overview(db=db, project_id=1)
+        assert result["by_discipline"] == []
+
+
+# ============================================================
 # webapi/services/spec_match（v1.0 §19 规格匹配）
 # ============================================================
 

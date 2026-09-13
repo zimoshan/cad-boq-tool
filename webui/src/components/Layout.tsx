@@ -1,5 +1,6 @@
 import React from "react";
 const RAIL_TABS = [
+  { key: "overview", label: "总览", icon: "📊" },
   { key: "binding", label: "绑定", icon: "🔗" },
   { key: "boq", label: "清单", icon: "📋" },
   { key: "measure", label: "计量", icon: "📐" },

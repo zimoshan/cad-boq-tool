@@ -191,6 +191,10 @@
     - 实现：[app/binding/duplicate_pricing.py](app/binding/duplicate_pricing.py) `build_duplicates()`（锚点归一化 FAN-01 == fan_01；block 优先于 layer）+ `detect_duplicate_pricing()`；webapi `get_duplicate_pricing()` + 端点。
     - 回测：tests/test_phase6_gates.py 4 例 + router 2 例全绿。
   - [x] **P6-3 CI/CD 实跑验证**（v2.0 出口标准 ⑤）｜ P1｜ ✅ 2026-09-08
+  - [ ] **P6-4 跨专业总览页（dataviz 集成点 ①落地）**（[docs/DATAVIZ_INTEGRATION.md](docs/DATAVIZ_INTEGRATION.md) 集成点 1：跨专业总览页 Phase 5+ 实施；P0-24 仅框架就绪，实施留 Phase 6）｜ P1 ｜ 🚧 2026-09-08
+    - 现状：`GET /api/audit/overview` 有 eo_breakdown（object_type+discipline 计数）但无按专业核对率（measured/verified/rate）；前端 rail 5 面板无"总览"页；dataviz 集成点 1 未实施。
+    - 方案：后端 `get_overview` 增强新增 `by_discipline`（per-discipline：eo 总数 + 已确认绑定数 + rate，LEFT JOIN binding_candidate status=ACCEPTED）；前端新增 `OverviewPanel.tsx`（rail 第 6 项"总览"）：SVG 无依赖图表（各专业核对率柱状图 + takability donut + BOQ 覆盖）＋ 版本冲突/重复计价告警（调 `/api/binding/version-conflicts` + `/api/binding/duplicate-pricing` 摘要）；App.tsx/Layout 接入。
+    - 验收：① `GET /api/audit/overview` 返回含 `by_discipline[].{discipline, eo_total, confirmed, rate}`；② 前端总览页渲染 ≥2 类 SVG 图表（渲染后端数据）；③ 版本冲突 stale_mappings>0 或重复计价>0 时告警卡可见；④ 单测覆盖 by_discipline 计算 + router 200；⑤ 前端 typecheck + build 通过。
     - 现状：`.github/workflows/test.yml` 已配置（backend 3.11/3.12 + PostGIS + frontend build + ruff），"实跑待首次 push"；本地无 GitHub remote、无 docker。
     - 方案：本地模拟 CI 逐个分析跑一遍 pytest（PG 分支）+ ruff + 前端 build；记录与 CI 差距 → 更新结论。
     - 已完成（2026-09-07）：**pytest 327 passed**；**ruff check + format 全部通过**（修复 8 处 + 11 个历史文件 formatting，证实 CI 此前从未实跑）；**前端 typecheck + build 通过**（修复 types.ts 缺 include_geom → 重新生成 openapi.json + typegen）；`pip install -e .` 可装（pyproject 完整）。

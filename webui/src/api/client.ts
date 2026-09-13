@@ -83,6 +83,12 @@ export const api = {
       const qs = new URLSearchParams({ project_id: String(projectId), limit: String(limit), ...(status ? { status } : {}) }).toString();
       return request<{ items: any[]; total: number }>(`/binding/candidates?${qs}`);
     },
+    // P6-1 版本冲突检测
+    versionConflicts: (projectId: number) =>
+      request<Record<string, unknown>>(`/binding/version-conflicts?project_id=${projectId}`),
+    // P6-2 重复计价检测
+    duplicatePricing: (projectId: number) =>
+      request<{ total: number; items: any[] }>(`/binding/duplicate-pricing?project_id=${projectId}`),
   },
 
   // BOQ

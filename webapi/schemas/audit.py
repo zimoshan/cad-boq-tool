@@ -33,3 +33,5 @@ class OverviewResponse(BaseModel):
     eo_breakdown: list[dict[str, Any]]
     writeback_by_takability: list[dict[str, Any]]
     llm_runs_by_task: list[dict[str, Any]]
+    # P6-4：按专业核对率（dataviz 总览页数据源：{discipline, eo_total, confirmed, rate}）
+    by_discipline: list[dict[str, Any]] = []
