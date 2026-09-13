@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -113,3 +113,30 @@ class TestLogRefusal:
             _log_refusal(stats, eo, {"code": "UNKNOWN", "reason": "test", "detail": ""})
         assert len(stats["refusals"]) == 3
         assert stats["refusals"][2]["eo_id"] == 2
+
+
+# ============================================================
+# P1-2: 评测闭环增强（by_discipline + spec_match + accuracy）
+# ============================================================
+
+
+class TestEvaluationEnhanced:
+    """get_evaluation_report 返回增强字段"""
+
+    @pytest.mark.asyncio
+    async def test_evaluation_returns_new_fields(self):
+        from webapi.services.binding import get_evaluation_report
+
+        empty = MagicMock()
+        empty.scalar.return_value = 0
+        empty.__iter__ = lambda self: iter([])
+        db = MagicMock()
+        # 模拟空数据库：5 次 execute 调用（stats/by_discipline/spec_match/eo_count 都返回空）
+        db.execute = AsyncMock(return_value=empty)
+        result = await get_evaluation_report(db=db, project_id=1)
+        assert "total_eo" in result
+        assert "by_discipline" in result
+        assert "spec_match_distribution" in result
+        assert "accuracy" in result
+        assert isinstance(result["by_discipline"], dict)
+        assert isinstance(result["spec_match_distribution"], dict)

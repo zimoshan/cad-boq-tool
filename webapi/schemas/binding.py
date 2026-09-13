@@ -64,15 +64,18 @@ class NegativeSampleRead(BaseModel):
 
 
 class EvaluationReport(BaseModel):
-    """v1.0 §20 评测报告：按方法分层 precision/recall"""
+    """v1.0 §20 评测报告：按方法分层 precision/recall + P1-2 增强"""
 
     project_id: int
     total_candidates: int
     total_confirmed: int
     total_rejected: int
+    total_eo: int = 0  # P1-2: 全部工程对象数
     by_method: dict = Field(default_factory=dict)
-    # {method: {candidates, confirmed, rejected, precision, recall}}
+    by_discipline: dict = Field(default_factory=dict)  # P1-2: 按专业分层
+    spec_match_distribution: dict = Field(default_factory=dict)  # P1-2: spec_match 状态分布
     overall_precision: float = 0.0
+    accuracy: float = 0.0  # P1-2: confirmed / total_eo
     generated_at: str = ""
 
 

@@ -364,12 +364,64 @@ async def get_evaluation_report(db: AsyncSession, project_id: int) -> dict[str, 
     overall_judged = total_confirmed + total_rejected
     overall_precision = total_confirmed / overall_judged if overall_judged > 0 else 0.0
 
+    # ===== P1-2 增强：按专业分层 + spec_match 分布 + 准确率 =====
+    by_discipline: dict[str, dict] = {}
+    try:
+        disc_sql = """
+            SELECT COALESCE(NULLIF(eo.discipline, ''), 'UNKNOWN') AS discipline,
+                   COUNT(*) AS total,
+                   SUM(CASE WHEN bc.status='ACCEPTED' THEN 1 ELSE 0 END) AS confirmed
+            FROM binding_candidate bc
+            JOIN engineering_object eo ON eo.id = bc.engineering_object_id
+            WHERE bc.project_id = :pid
+            GROUP BY COALESCE(NULLIF(eo.discipline, ''), 'UNKNOWN')
+        """
+        disc_rows = [dict(row._mapping) for row in (await db.execute(text(disc_sql), {"pid": project_id}))]
+        for r in disc_rows:
+            d = r["discipline"]
+            c = r["confirmed"] or 0
+            t = r["total"] or 0
+            by_discipline[d] = {
+                "candidates": t,
+                "confirmed": c,
+                "precision": round(c / t, 4) if t else 0.0,
+            }
+    except Exception:
+        pass
+
+    # spec_match 分布（binding_candidate 表若有 spec_match_status 列）
+    spec_match_dist: dict[str, int] = {}
+    try:
+        sm_sql = """
+            SELECT spec_match_status, COUNT(*) AS n
+            FROM binding_candidate
+            WHERE project_id = :pid AND spec_match_status IS NOT NULL
+            GROUP BY spec_match_status
+        """
+        sm_rows = [dict(row._mapping) for row in (await db.execute(text(sm_sql), {"pid": project_id}))]
+        for r in sm_rows:
+            spec_match_dist[r["spec_match_status"]] = r["n"] or 0
+    except Exception:
+        pass
+
+    # 准确率 = 已确认 / 全部工程对象（更宏观的指标）
+    try:
+        eo_sql = "SELECT COUNT(*) FROM engineering_object WHERE project_id = :pid"
+        total_eo = (await db.execute(text(eo_sql), {"pid": project_id})).scalar() or 0
+    except Exception:
+        total_eo = 0
+    accuracy = total_confirmed / total_eo if total_eo > 0 else 0.0
+
     return {
         "project_id": project_id,
         "total_candidates": total_candidates,
         "total_confirmed": total_confirmed,
         "total_rejected": total_rejected,
+        "total_eo": total_eo,
         "by_method": by_method,
+        "by_discipline": by_discipline,
+        "spec_match_distribution": spec_match_dist,
         "overall_precision": round(overall_precision, 4),
+        "accuracy": round(accuracy, 4),
         "generated_at": datetime.now().isoformat(),
     }
