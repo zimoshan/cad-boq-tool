@@ -216,6 +216,12 @@ def _write_final(project_id: int, eo, final: list, rejected: set, stats: dict, c
         cal_result = calibrate(cal_input)
         calibrated_confidence = cal_result["final_confidence"]
 
+        # ===== P2-1: 规格硬冲突降分 + 标记 needs_review =====
+        if has_conflict and spec_score == 0.0:
+            # CONFLICT：规格硬冲突 → 强制降至最低分，reason 追加冲突标记
+            calibrated_confidence = min(calibrated_confidence, 0.1)
+            reason = f"[CONFLICT] {reason}"
+
         # 写入校准后的置信度
         created.append(
             db.create_binding_candidate(

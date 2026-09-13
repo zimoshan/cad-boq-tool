@@ -140,3 +140,85 @@ class TestEvaluationEnhanced:
         assert "accuracy" in result
         assert isinstance(result["by_discipline"], dict)
         assert isinstance(result["spec_match_distribution"], dict)
+
+
+# ============================================================
+# P2-1: 规格硬冲突处理（CONFLICT → 降分 + 标记）
+# ============================================================
+
+
+class TestSpecConflictDowngrade:
+    """CONFLICT 候选自动降分至 0.1"""
+
+    @patch("app.binding.matcher.calibrate", return_value={"final_confidence": 0.85})
+    @patch("app.binding.matcher.match_spec")
+    @patch("app.binding.matcher.db")
+    def test_conflict_downgrades_confidence(self, mock_db, mock_match, mock_cal):
+        from app.binding.matcher import _write_final, SpecMatchStatus
+
+        # 模拟 CONFLICT
+        sm = MagicMock()
+        sm.status = SpecMatchStatus.CONFLICT
+        sm.needs_review = True
+        mock_match.return_value = sm
+
+        # mock db
+        mock_db.get_boq_items.return_value = [SimpleNamespace(id=1, description="FAN 220V", code="BOQ-001")]
+        mock_db.create_binding_candidate.return_value = 1
+
+        eo = SimpleNamespace(id=10, tag="FAN", block_name="FAN-01", layer_name="E-Light")
+        stats: dict = {}
+        created: list = []
+
+        wrote = _write_final(
+            project_id=1,
+            eo=eo,
+            final=[(1, 0.85, "规则匹配", "rule", None)],
+            rejected=set(),
+            stats=stats,
+            created=created,
+        )
+
+        assert wrote == 1
+        # 校准结果 0.85 被 CONFLICT 降至 0.1
+        call_kwargs = mock_db.create_binding_candidate.call_args
+        assert call_kwargs[1]["confidence"] <= 0.1 or call_kwargs.kwargs.get("confidence", 1) <= 0.1
+        # reason 包含 [CONFLICT] 标记
+        assert "[CONFLICT]" in call_kwargs[1].get("reason", "") or "[CONFLICT]" in call_kwargs.kwargs.get("reason", "")
+
+    @patch("app.binding.matcher.calibrate", return_value={"final_confidence": 0.7})
+    @patch("app.binding.matcher.match_spec")
+    @patch("app.binding.matcher.db")
+    def test_compatible_no_downgrade(self, mock_db, mock_match, mock_cal):
+        from app.binding.matcher import _write_final, SpecMatchStatus
+
+        # 模拟 COMPATIBLE（非 CONFLICT）
+        sm = MagicMock()
+        sm.status = SpecMatchStatus.COMPATIBLE
+        sm.needs_review = False
+        mock_match.return_value = sm
+
+        mock_db.get_boq_items.return_value = [SimpleNamespace(id=1, description="FAN", code="BOQ-001")]
+        mock_db.create_binding_candidate.return_value = 1
+
+        eo = SimpleNamespace(id=10, tag="FAN", block_name="FAN-01", layer_name="E-Light")
+        stats: dict = {}
+        created: list = []
+
+        wrote = _write_final(
+            project_id=1,
+            eo=eo,
+            final=[(1, 0.7, "规则匹配", "rule", None)],
+            rejected=set(),
+            stats=stats,
+            created=created,
+        )
+
+        assert wrote == 1
+        call_kwargs = mock_db.create_binding_candidate.call_args
+        # COMPATIBLE 不降分，confidence 应 ≥ 0.7
+        conf = call_kwargs[1].get("confidence", call_kwargs.kwargs.get("confidence", 0))
+        assert conf >= 0.6
+        # reason 不含 [CONFLICT]
+        reason = call_kwargs[1].get("reason", call_kwargs.kwargs.get("reason", ""))
+        assert "[CONFLICT]" not in reason
