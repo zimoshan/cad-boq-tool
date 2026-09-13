@@ -72,6 +72,14 @@ async def negative_samples(
     return {"items": items, "total": len(items)}
 
 
+@router.get("/refusals")
+@requires("binding:read")
+async def refusals(project_id: int) -> dict:
+    """P0-2 查询 no_match 拒绝诊断（最近一次 generate_candidates 结果）"""
+    items = binding_service.get_refusals(project_id)
+    return {"items": items, "total": len(items)}
+
+
 @router.get("/evaluation")
 @requires("binding:read")
 async def evaluation(

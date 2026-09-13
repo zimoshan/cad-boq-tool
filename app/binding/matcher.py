@@ -74,6 +74,86 @@ def _rejected_pairs(project_id: int, eo) -> set:
     return {c.boq_item_id for c in rej}
 
 
+# ---- P0-2: no_match 结构化拒绝原因 ----
+
+# 拒绝原因码 → 人类可读描述
+_REFUSAL_REASONS: dict[str, str] = {
+    "BOQ_EMPTY":   "项目无 BOQ 清单项",
+    "EO_NO_TEXT":  "工程对象无可识别文本（块名/图层名/属性均为空）",
+    "NO_KEYWORD":  "BOQ 与工程对象关键词无交集",
+    "ALL_REJECTED": "所有候选均已被人工拒绝",
+    "UNKNOWN":     "匹配流程异常（规则/语义/LLM 均无候选）",
+}
+
+
+def _diagnose_no_match(project_id: int, eo, boq_items: list) -> dict:
+    """结构化诊断：分析 no_match 的具体原因。
+
+    Returns:
+        {"code": str, "reason": str, "detail": str}
+        code: 机器可读码（BOQ_EMPTY / EO_NO_TEXT / NO_KEYWORD / ALL_REJECTED / UNKNOWN）
+        reason: 中文短描述
+        detail: 可展开的附加信息
+    """
+    # 1. BOQ 为空
+    if not boq_items:
+        return {"code": "BOQ_EMPTY", "reason": _REFUSAL_REASONS["BOQ_EMPTY"], "detail": "BOQ item 列表长度为 0"}
+
+    # 2. EO 无可搜索文本
+    eo_text = ""
+    try:
+        eo_text = enriched_eo_text(project_id, eo).strip()
+    except Exception:
+        pass
+    eo_block = ""
+    eo_layer = ""
+    try:
+        eo_block = getattr(eo, "block_name", "") or ""
+        eo_layer = getattr(eo, "layer_name", "") or ""
+    except Exception:
+        pass
+    if not eo_text:
+        return {
+            "code": "EO_NO_TEXT",
+            "reason": _REFUSAL_REASONS["EO_NO_TEXT"],
+            "detail": f"block_name={eo_block!r}, layer_name={eo_layer!r}",
+        }
+
+    # 3. 关键词交集检查
+    eo_words = [w for w in re.split(r"[\s_\-/\\.,()\[\]]+", eo_text.upper()) if len(w) >= 2]
+    if eo_words:
+        has_any = False
+        for it in boq_items:
+            btext = boq_searchable(it)
+            if btext and any(w in btext for w in eo_words):
+                has_any = True
+                break
+        if not has_any:
+            return {
+                "code": "NO_KEYWORD",
+                "reason": _REFUSAL_REASONS["NO_KEYWORD"],
+                "detail": f"EO 关键词 {eo_words[:5]} 与 {len(boq_items)} 条 BOQ 均无交集",
+            }
+
+    # 4. 默认
+    return {"code": "UNKNOWN", "reason": _REFUSAL_REASONS["UNKNOWN"], "detail": "规则/语义/LLM 均未产出有效候选"}
+
+
+def _log_refusal(stats: dict, eo, diagnosis: dict) -> None:
+    """将拒绝记录追加到 stats['refusals'] 列表（供 API 返回）。"""
+    if "refusals" not in stats:
+        stats["refusals"] = []
+    stats["refusals"].append({
+        "eo_id": getattr(eo, "id", None),
+        "eo_tag": getattr(eo, "tag", "") or "",
+        "block_name": getattr(eo, "block_name", "") or "",
+        "layer_name": getattr(eo, "layer_name", "") or "",
+        "code": diagnosis["code"],
+        "reason": diagnosis["reason"],
+        "detail": diagnosis["detail"],
+    })
+
+
 def _write_final(project_id: int, eo, final: list, rejected: set, stats: dict, created: list) -> int:
     """过滤被拒组合后写候选，返回实际写入数。
 
@@ -294,6 +374,7 @@ def generate_candidates(project_id: int, sheet_id: int = None, use_llm: bool = T
                 base = base[:top_n]
             if not base:
                 stats["no_match"] += 1
+                _log_refusal(stats, eo, _diagnose_no_match(project_id, eo, boq_items))
                 continue
 
         if use_llm and base:
@@ -306,6 +387,7 @@ def generate_candidates(project_id: int, sheet_id: int = None, use_llm: bool = T
                 _count_layer(final, stats)
             else:
                 stats["no_match"] += 1
+                _log_refusal(stats, eo, _diagnose_no_match(project_id, eo, boq_items))
 
     # ===== 第4层：LLM 精排（并发批量，失败保底原候选） =====
     if llm_jobs and not llm_available():
@@ -317,6 +399,7 @@ def generate_candidates(project_id: int, sheet_id: int = None, use_llm: bool = T
                 _count_layer(final, stats)
             else:
                 stats["no_match"] += 1
+                _log_refusal(stats, eo, _diagnose_no_match(project_id, eo, boq_items))
         stats["llm_unavailable"] = len(llm_jobs)
         return {"candidates": len(created), "stats": stats, "created": created}
 
@@ -328,6 +411,7 @@ def generate_candidates(project_id: int, sheet_id: int = None, use_llm: bool = T
             wrote = _write_final(project_id, eo, list(final), _rejected_pairs(project_id, eo), stats, created)
             if wrote == 0:
                 stats["no_match"] += 1
+                _log_refusal(stats, eo, _diagnose_no_match(project_id, eo, boq_items))
             elif any(c[3] == cand.METHOD_LLM for c in final):
                 stats["llm"] += 1
             elif any(c[3] == cand.METHOD_EMBEDDING for c in final):

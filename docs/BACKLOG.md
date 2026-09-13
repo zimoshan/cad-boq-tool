@@ -191,11 +191,10 @@
     - 实现：[app/binding/duplicate_pricing.py](app/binding/duplicate_pricing.py) `build_duplicates()`（锚点归一化 FAN-01 == fan_01；block 优先于 layer）+ `detect_duplicate_pricing()`；webapi `get_duplicate_pricing()` + 端点。
     - 回测：tests/test_phase6_gates.py 4 例 + router 2 例全绿。
   - [x] **P6-3 CI/CD 实跑验证**（v2.0 出口标准 ⑤）｜ P1｜ ✅ 2026-09-08
-  - [ ] **P6-4 跨专业总览页（dataviz 集成点 ①落地）**（[docs/DATAVIZ_INTEGRATION.md](docs/DATAVIZ_INTEGRATION.md) 集成点 1：跨专业总览页 Phase 5+ 实施；P0-24 仅框架就绪，实施留 Phase 6）｜ P1 ｜ 🚧 2026-09-08
+  - [x] **P6-4 跨专业总览页（dataviz 集成点 ①落地）**（[docs/DATAVIZ_INTEGRATION.md](docs/DATAVIZ_INTEGRATION.md) 集成点 1：跨专业总览页 Phase 5+ 实施；P0-24 仅框架就绪，实施留 Phase 6）｜ P1 ｜ ✅ 2026-09-08
     - 现状：`GET /api/audit/overview` 有 eo_breakdown（object_type+discipline 计数）但无按专业核对率（measured/verified/rate）；前端 rail 5 面板无"总览"页；dataviz 集成点 1 未实施。
     - 方案：后端 `get_overview` 增强新增 `by_discipline`（per-discipline：eo 总数 + 已确认绑定数 + rate，LEFT JOIN binding_candidate status=ACCEPTED）；前端新增 `OverviewPanel.tsx`（rail 第 6 项"总览"）：SVG 无依赖图表（各专业核对率柱状图 + takability donut + BOQ 覆盖）＋ 版本冲突/重复计价告警（调 `/api/binding/version-conflicts` + `/api/binding/duplicate-pricing` 摘要）；App.tsx/Layout 接入。
-    - 验收：① `GET /api/audit/overview` 返回含 `by_discipline[].{discipline, eo_total, confirmed, rate}`；② 前端总览页渲染 ≥2 类 SVG 图表（渲染后端数据）；③ 版本冲突 stale_mappings>0 或重复计价>0 时告警卡可见；④ 单测覆盖 by_discipline 计算 + router 200；⑤ 前端 typecheck + build 通过。
-    - 现状：`.github/workflows/test.yml` 已配置（backend 3.11/3.12 + PostGIS + frontend build + ruff），"实跑待首次 push"；本地无 GitHub remote、无 docker。
+    - 验收：① `GET /api/audit/overview` 返回含 `by_discipline[].{discipline, eo_total, confirmed, rate}` ✅；② 前端总览页渲染 ≥2 类 SVG 图表 ✅；③ 版本冲突/重复计价告警卡可见 ✅；④ 单测 2 例（by_discipline 聚合 + 表缺失容错）✅；⑤ 前端 typecheck + build 通过 ✅。已提交 `2ef9eeb`。
     - 方案：本地模拟 CI 逐个分析跑一遍 pytest（PG 分支）+ ruff + 前端 build；记录与 CI 差距 → 更新结论。
     - 已完成（2026-09-07）：**pytest 327 passed**；**ruff check + format 全部通过**（修复 8 处 + 11 个历史文件 formatting，证实 CI 此前从未实跑）；**前端 typecheck + build 通过**（修复 types.ts 缺 include_geom → 重新生成 openapi.json + typegen）；`pip install -e .` 可装（pyproject 完整）。
     - 实跑（2026-09-08）：`git push origin main`（10 提交）→ GitHub Actions run 34189326208 **全部 5 项 Job 全绿**：lint (ruff) 8s、backend 3.12 1m30s、backend 3.11 1m14s、frontend (Node 20) 17s。**CI 历史首次全绿**（此前 run 34057574046 / 34056580031 均 failure）。
@@ -217,7 +216,7 @@
   - 实现位置：`app/takeoff/block_legend.py` 或新增 `app/ocr/paddle_ocr.py`。
   - 验收：图例裸文字历史失败用例能识别出规格；完全本地离线运行；无 LLM API 成本。
 
-- [ ] **P0-2 Refusal 策略：no_match 结构化拒绝原因**｜ P0 ｜ ⬜
+- [ ] **P0-2 Refusal 策略：no_match 结构化拒绝原因**｜ P0 ｜ 🚧 2026-09-08
   - 现状：`no_match` 仅计数、静默 skip，用户不知道哪个工程对象没绑定。
   - 方案：`matcher.py` 新增 `_diagnose_no_match(eo, boq_items) -> str`（无块名/图层名 → BOQ 为空 → EO 无可搜索文本 → BOQ 无关键词交集）；`db.py` 新增 `log_binding_refusal` 落库（可用）。参考[评审 §五-②](docs/REVIEW_TECH_ROUTE_2026-09-06.md)。
   - 验收：对每个 no_match 工程对象可查到结构化拒绝原因；UI/日志可展示；`stats["no_match"]` 计数保留。

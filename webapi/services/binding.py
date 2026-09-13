@@ -22,6 +22,20 @@ from app.binding.version_gate import build_version_report
 from webapi.services.base import NotFoundError, ServiceError
 
 
+# ===== P0-2: Refusal 缓存（generate 时写入，/refusals 端点读取） =====
+_refusal_cache: dict[int, list[dict]] = {}  # project_id → refusal list
+
+
+def _store_refusals(project_id: int, refusals: list[dict]) -> None:
+    """缓存最近一次 generate 的拒绝列表（按 project_id 隔离）。"""
+    _refusal_cache[project_id] = refusals
+
+
+def get_refusals(project_id: int) -> list[dict]:
+    """查询指定项目的最近拒绝列表。"""
+    return _refusal_cache.get(project_id, [])
+
+
 def _log_negative_sample(
     db: AsyncSession,
     project_id: int,
@@ -78,12 +92,16 @@ async def generate_candidates_for_project(
             use_llm=use_llm,
             top_n=top_n,
         )
+        stats = result.get("stats", {})
+        refusals = stats.pop("refusals", [])
+        _store_refusals(project_id, refusals)  # 缓存拒绝列表供 /refusals 端点查询
         return {
             "project_id": project_id,
             "sheet_id": sheet_id,
             "use_llm": use_llm,
             "candidates_created": result.get("candidates", 0),
-            "stats": result.get("stats", {}),
+            "stats": stats,
+            "refusals": refusals,  # P0-2: 结构化拒绝原因列表
         }
     except Exception as e:
         raise ServiceError(f"Generate candidates failed: {e}", code="binding_generate_error") from e

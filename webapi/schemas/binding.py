@@ -18,6 +18,7 @@ class GenerateCandidatesResponse(BaseModel):
     use_llm: bool
     candidates_created: int
     stats: dict = Field(default_factory=dict)
+    refusals: list[dict] = Field(default_factory=list, description="P0-2 no_match 结构化拒绝原因列表")
 
 
 class ConfirmBindingRequest(BaseModel):
@@ -73,3 +74,18 @@ class EvaluationReport(BaseModel):
     # {method: {candidates, confirmed, rejected, precision, recall}}
     overall_precision: float = 0.0
     generated_at: str = ""
+
+
+# ===== P0-2: Refusal 策略 =====
+
+
+class BindingRefusalRead(BaseModel):
+    """no_match 拒绝诊断记录"""
+
+    eo_id: int | None = None
+    eo_tag: str = ""
+    block_name: str = ""
+    layer_name: str = ""
+    code: str  # BOQ_EMPTY / EO_NO_TEXT / NO_KEYWORD / ALL_REJECTED / UNKNOWN
+    reason: str  # 中文短描述
+    detail: str = ""  # 附加信息
