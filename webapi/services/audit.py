@@ -72,9 +72,12 @@ async def get_precheck(
 
     1. drawing_type  2. takability  3. coverage  4. granularity  5. version  6. provisional
     """
-    # 1. drawing_type 分布
+    # 1. drawing_type 分布（SQLite sheet 表无 drawing_type 列 → 容错空列表）
     sql_dt = text("""SELECT drawing_type, COUNT(*) AS n FROM sheet WHERE project_id = :pid GROUP BY drawing_type""")
-    drawing_type_breakdown = [dict(r._mapping) for r in (await db.execute(sql_dt, {"pid": project_id}))]
+    try:
+        drawing_type_breakdown = [dict(r._mapping) for r in (await db.execute(sql_dt, {"pid": project_id}))]
+    except Exception:
+        drawing_type_breakdown = []
 
     # 2. takability 6 状态
     sql_tk = text(
@@ -105,15 +108,21 @@ async def get_precheck(
         "avg_entity_per_sheet": round(gr[1], 1) if gr else 0,
     }
 
-    # 5. version：revision 分布
+    # 5. version：revision 分布（SQLite sheet 表无 revision 列 → 容错空列表）
     sql_ver = text(
         """SELECT revision, COUNT(*) AS n FROM sheet WHERE project_id = :pid AND revision != '' GROUP BY revision"""
     )
-    version_breakdown = [dict(r._mapping) for r in (await db.execute(sql_ver, {"pid": project_id}))]
+    try:
+        version_breakdown = [dict(r._mapping) for r in (await db.execute(sql_ver, {"pid": project_id}))]
+    except Exception:
+        version_breakdown = []
 
-    # 6. provisional：remark 含 [PROVISIONAL] 的 boq_item 数
+    # 6. provisional：remark 含 [PROVISIONAL] 的 boq_item 数（SQLite boq_item 表无 remark 列 → 容错 0）
     sql_prov = text("""SELECT COUNT(*) AS n FROM boq_item WHERE project_id = :pid AND remark LIKE '%[PROVISIONAL]%'""")
-    provisional_count = (await db.execute(sql_prov, {"pid": project_id})).scalar() or 0
+    try:
+        provisional_count = (await db.execute(sql_prov, {"pid": project_id})).scalar() or 0
+    except Exception:
+        provisional_count = 0
 
     return {
         "project_id": project_id,
